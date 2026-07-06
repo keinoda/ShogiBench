@@ -40,6 +40,12 @@
             "draw_adj"        : "movenumber=40 movecount=8 score=10"
         },
 
+        "VSTC" : {
+            "both_options"      : "Threads=1 Hash=32",
+            "both_time_control" : "4.0+0.04",
+            "workload_size"     : 64
+        },
+
         "STC" : {
             "both_options"      : "Threads=1 Hash=64",
             "both_time_control" : "8.0+0.08",
@@ -52,10 +58,60 @@
             "workload_size"     : 8
         },
 
+        "VLTC" : {
+            "both_options"      : "Threads=1 Hash=512",
+            "both_time_control" : "120.0+1.2",
+            "workload_size"     : 4
+        },
+
+        "SMP STC" : {
+            "both_options"      : "Threads=4 Hash=256",
+            "both_time_control" : "10.0+0.1",
+            "workload_size"     : 8
+        },
+
+        "SMP LTC" : {
+            "both_options"      : "Threads=4 Hash=1024",
+            "both_time_control" : "30.0+0.3",
+            "workload_size"     : 4
+        },
+
         "25k nodes" : {
             "both_options"      : "Threads=1 Hash=64",
             "both_time_control" : "N=25000",
             "workload_size"     : 128
+        },
+
+        "100k nodes" : {
+            "both_options"      : "Threads=1 Hash=128",
+            "both_time_control" : "N=100000",
+            "workload_size"     : 64
+        },
+
+        "1M nodes" : {
+            "both_options"      : "Threads=1 Hash=256",
+            "both_time_control" : "N=1000000",
+            "workload_size"     : 16
+        },
+
+        "1手1秒 (秒読み風)" : {
+            "both_options"      : "Threads=1 Hash=256",
+            "both_time_control" : "MT=1000",
+            "workload_size"     : 16
+        },
+
+        "回帰確認 STC [-4, 0]" : {
+            "both_options"      : "Threads=1 Hash=64",
+            "both_time_control" : "8.0+0.08",
+            "test_bounds"       : "[-4.00, 0.00]",
+            "workload_size"     : 32
+        },
+
+        "固定2000局 (Elo測定)" : {
+            "both_options"      : "Threads=1 Hash=64",
+            "both_time_control" : "8.0+0.08",
+            "test_max_games"    : 2000,
+            "workload_size"     : 32
         }
     },
 

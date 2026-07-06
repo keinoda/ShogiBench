@@ -99,6 +99,11 @@ def filter_valid_workloads(request, machine):
 
     workloads = OpenBench.utils.get_active_tests()
 
+    # Skip workloads whose engine was removed or renamed in the config,
+    # since we can no longer look up how to build or run them
+    known_engines = list(OPENBENCH_CONFIG['engines'].keys())
+    workloads = workloads.filter(dev_engine__in=known_engines, base_engine__in=known_engines)
+
     # Skip engines that the Machine cannot handle
     for engine in OPENBENCH_CONFIG['engines'].keys():
         if engine not in machine.info['supported']:
