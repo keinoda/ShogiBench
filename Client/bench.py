@@ -44,6 +44,13 @@ import utils
 
 MAX_BENCH_TIME_SECONDS = 300
 
+# Some engines serialize loading their eval file with a file lock
+# (YaneuraOu takes one per nn.bin inode). On very large machines,
+# hundreds of parallel benches then load one-at-a-time and blow through
+# any timeout, so the parallelism is capped: per-process NPS barely
+# changes, and that average is what the server scales against anyway
+MAX_PARALLEL_BENCHES = 32
+
 def parse_stream_output(stream):
 
     nps = bench = None # Search through output Stream
@@ -136,6 +143,7 @@ def single_core_bench(binary, network, private, bench_args, usi_options, fatal_p
 
 def multi_core_bench(binary, network, private, threads, bench_args='', usi_options=None, fatal_patterns=None):
 
+    threads  = min(threads, MAX_PARALLEL_BENCHES)
     outqueue = multiprocessing.Queue()
 
     processes = [

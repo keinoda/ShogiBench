@@ -27,6 +27,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 
 ## Local imports must only use "import x", never "from x import ..."
@@ -97,7 +98,12 @@ def kill_process_by_name(process_name):
     process_name = os.path.basename(process_name)
 
     if IS_LINUX:
+        # TERM first; then KILL any survivor. A leftover engine can sit on
+        # a file lock (eg YaneuraOu's eval load lock) and wedge every
+        # engine started after it, so nothing may survive this sweep
         subprocess.run(['pkill', '-f', process_name])
+        time.sleep(1)
+        subprocess.run(['pkill', '-9', '-f', process_name])
 
     if IS_WINDOWS:
         subprocess.run(['taskkill', '/f', '/im', process_name])
