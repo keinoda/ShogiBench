@@ -24,7 +24,10 @@ primary_region = 'nrt'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep one machine always on: Fly stopping the machine mid-request breaks
+  # interactive actions like the SSH worker bootstrap. Set back to 0 if you
+  # prefer scale-to-zero and can live with cold starts.
+  min_machines_running = 1
 
 [[vm]]
   size = 'shared-cpu-1x'
