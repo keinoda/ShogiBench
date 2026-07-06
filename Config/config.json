@@ -28,6 +28,7 @@
 
     "engines" : [
         "YaneuraOu-nagisa",
+        "YaneuraOu-souyuukou",
         "YaneuraOu"
     ]
 }
