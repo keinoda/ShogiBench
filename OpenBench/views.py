@@ -147,24 +147,33 @@ def client_authenticate(request):
     except UnableToAuthenticate:
         pass
 
-    try:
-        key = WorkerKey.objects.get(token=request.POST['password'], enabled=True)
+    ## The reasons below are printed (never the token itself) so that a
+    ## failing worker can be diagnosed from the server logs.
 
-        # Token must be paired with the username of its owner
-        if key.user.username != request.POST['username']:
-            raise UnableToAuthenticate()
+    username = request.POST.get('username', '').strip()
+    token    = request.POST.get('password', '').strip()
 
-        # Owner must still be an enabled user
-        if not Profile.objects.get(user=key.user).enabled:
-            raise UnableToAuthenticate()
+    key = WorkerKey.objects.filter(token=token, enabled=True).first()
 
-        key.last_used = timezone.now()
-        key.save(update_fields=['last_used'])
-
-        return key.user
-
-    except Exception:
+    if not key:
+        print ('Worker auth failed: no enabled Worker Key matches the token supplied by %r' % (username), flush=True)
         raise UnableToAuthenticate()
+
+    # Token must be paired with the username of its owner
+    if key.user.username.lower() != username.lower():
+        print ('Worker auth failed: Key "%s" belongs to "%s", but username %r was supplied'
+               % (key.name, key.user.username, username), flush=True)
+        raise UnableToAuthenticate()
+
+    # Owner must still be an enabled user
+    if not Profile.objects.filter(user=key.user, enabled=True).exists():
+        print ('Worker auth failed: owner "%s" of Key "%s" is disabled' % (key.user.username, key.name), flush=True)
+        raise UnableToAuthenticate()
+
+    key.last_used = timezone.now()
+    key.save(update_fields=['last_used'])
+
+    return key.user
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                            ADMINISTRATIVE VIEWS                             #
