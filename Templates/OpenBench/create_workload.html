@@ -30,10 +30,10 @@
         <div class="form w-100">
             <div class="col">
 
-                <h3> Engines </h3>
+                <h3> エンジン </h3>
 
                 <div class="row">
-                    <label for="dev_engine"> {{dev_text}} Engine </label>
+                    <label for="dev_engine"> {{dev_text}} エンジン </label>
                     <select id="dev_engine" name="dev_engine" onchange="change_engine(value, 'dev', '{{workload}}');">
                         {% for engine in config.engines %}
                             <option value="{{ engine }}">{{ engine }}</option>
@@ -42,12 +42,12 @@
                 </div>
 
                 <div class="row">
-                    <label for="dev_repo"> {{dev_text}} Source </label> <input id="dev_repo" name="dev_repo">
+                    <label for="dev_repo"> {{dev_text}} ソース </label> <input id="dev_repo" name="dev_repo">
                 </div>
 
                 {% if workload == "TEST" or workload == "DATAGEN" %}
                     <div class="row">
-                        <label for="base_engine"> Base Engine </label>
+                        <label for="base_engine"> Base エンジン </label>
                         <select id="base_engine" name="base_engine" onchange="change_engine(value, 'base', '{{workload}}');">
                             {% for engine in config.engines %}
                                 <option value="{{ engine }}">{{ engine }}</option>
@@ -56,60 +56,60 @@
                     </div>
 
                     <div class="row">
-                        <label for="base_repo"> Base Source </label> <input id="base_repo" name="base_repo">
+                        <label for="base_repo"> Base ソース </label> <input id="base_repo" name="base_repo">
                     </div>
                 {% endif %}
 
-                <h3> {{dev_title_text}} Settings </h3>
+                <h3> {{dev_title_text}} 設定 </h3>
 
                 <div class="row">
-                    <label for="dev_branch" > {{dev_text}} Branch </label> <input id="dev_branch" name="dev_branch" autofocus>
+                    <label for="dev_branch" > {{dev_text}} ブランチ </label> <input id="dev_branch" name="dev_branch" autofocus>
                 </div>
                 <div class="row">
                     <label for="dev_bench" > {{dev_text}} Bench </label> <input value="Autofill" id="dev_bench" name="dev_bench">
                 </div>
                 <div class="row">
-                    <label for="dev_network" > {{dev_text}} Network </label> <select id="dev_network" name="dev_network"></select>
+                    <label for="dev_network" > {{dev_text}} ネットワーク </label> <select id="dev_network" name="dev_network"></select>
                 </div>
                 <div class="row">
-                    <label for="dev_build" > {{dev_text}} Build </label> <select id="dev_build" name="dev_build"></select>
+                    <label for="dev_build" > {{dev_text}} ビルド </label> <select id="dev_build" name="dev_build"></select>
                 </div>
                 <div class="row">
-                    <label for="dev_options"> {{dev_text}} Options </label> <input id="dev_options" name="dev_options">
+                    <label for="dev_options"> {{dev_text}} オプション </label> <input id="dev_options" name="dev_options">
                 </div>
                 <div class="row">
-                    <label for="dev_time_control"> {{dev_text}} Time </label> <input id="dev_time_control" name="dev_time_control">
+                    <label for="dev_time_control"> {{dev_text}} 持ち時間 </label> <input id="dev_time_control" name="dev_time_control">
                 </div>
 
                 {% if workload == "TEST" or workload == "DATAGEN" %}
 
-                    <h3> Base Settings </h3>
+                    <h3> Base 設定 </h3>
 
                     <div class="row">
-                        <label for="base_branch"> Base Branch </label> <input id="base_branch" name="base_branch">
+                        <label for="base_branch"> Base ブランチ </label> <input id="base_branch" name="base_branch">
                     </div>
                     <div class="row">
                         <label for="base_bench"> Base Bench </label> <input value="Autofill" id="base_bench" name="base_bench">
                     </div>
                     <div class="row">
-                        <label for="base_network"> Base Network </label> <select id="base_network" name="base_network"></select>
+                        <label for="base_network"> Base ネットワーク </label> <select id="base_network" name="base_network"></select>
                     </div>
                     <div class="row">
-                        <label for="base_build"> Base Build </label> <select id="base_build" name="base_build"></select>
+                        <label for="base_build"> Base ビルド </label> <select id="base_build" name="base_build"></select>
                     </div>
                     <div class="row">
-                        <label for="base_options"> Base Options </label> <input id="base_options" name="base_options">
+                        <label for="base_options"> Base オプション </label> <input id="base_options" name="base_options">
                     </div>
                     <div class="row">
-                        <label for="base_time_control" > Base Time </label> <input id="base_time_control" name="base_time_control">
+                        <label for="base_time_control" > Base 持ち時間 </label> <input id="base_time_control" name="base_time_control">
                     </div>
 
                 {% elif workload == "TUNE" %}
 
-                    <h3> SPSA Methodologies </h3>
+                    <h3> SPSA 方式 </h3>
 
                     <div class="row">
-                        <label for="spsa_reporting_type"> Reporting </label>
+                        <label for="spsa_reporting_type"> レポート方式 </label>
                         <select id="spsa_reporting_type" name="spsa_reporting_type">
                             <option selected value="BATCHED"> Batched </option>
                             <option value="BULK"> Bulk </option>
@@ -117,14 +117,14 @@
                     </div>
 
                     <div class="row">
-                        <label for="spsa_distribution_type"> Distribution </label>
+                        <label for="spsa_distribution_type"> 分布 </label>
                         <select id="spsa_distribution_type" name="spsa_distribution_type">
                             <option selected value="SINGLE"> Single </option>
                             <option value="MULTIPLE"> Multiple </option>
                         </select>
                     </div>
 
-                    <h3> SPSA Input </h3>
+                    <h3> SPSA 入力 </h3>
 
                     <div class="row">
                         <textarea style="margin-left:24px" id="spsa_inputs" name="spsa_inputs" rows=9></textarea>
@@ -138,31 +138,31 @@
 
                 {% if workload == "TEST" %}
 
-                    <h3> Test Settings </h3>
+                    <h3> テスト設定 </h3>
 
                     <div class="row">
-                        <label for="test_mode"> Test Mode </label>
+                        <label for="test_mode"> テスト方式 </label>
                         <select onchange='set_test_type()' id="test_mode" name="test_mode">
-                            <option selected value="SPRT"> SPRT</option>
-                            <option value="GAMES"> Fixed Games</option>
+                            <option selected value="SPRT"> SPRT(逐次検定)</option>
+                            <option value="GAMES"> 固定対局数</option>
                         </select>
                     </div>
 
                     <div class="row">
-                        <label for="test_bounds"> Bounds </label> <input id="test_bounds" name="test_bounds">
+                        <label for="test_bounds"> SPRT範囲 </label> <input id="test_bounds" name="test_bounds">
                     </div>
 
                     <div class="row">
-                        <label for="test_confidence"> Confidence </label> <input id="test_confidence" name="test_confidence">
+                        <label for="test_confidence"> 信頼度 </label> <input id="test_confidence" name="test_confidence">
                     </div>
 
                     <div class="row">
-                        <label for="test_max_games"> Max Games </label> <input id="test_max_games" name="test_max_games">
+                        <label for="test_max_games"> 最大対局数 </label> <input id="test_max_games" name="test_max_games">
                     </div>
 
                 {% elif workload == "TUNE" %}
 
-                    <h3> SPSA Settings </h3>
+                    <h3> SPSA 設定 </h3>
 
                     <div class="row">
                         <label for="spsa_alpha"> Alpha </label> <input value="0.602" id="spsa_alpha" name="spsa_alpha">
@@ -174,26 +174,26 @@
                         <label for="spsa_A_ratio"> A-Ratio </label> <input value="0.1" id="spsa_A_ratio" name="spsa_A_ratio">
                     </div>
                     <div class="row">
-                        <label for="spsa_iterations"> Iterations </label> <input value="25000" id="spsa_iterations" name="spsa_iterations">
+                        <label for="spsa_iterations"> 反復回数 </label> <input value="25000" id="spsa_iterations" name="spsa_iterations">
                     </div>
                     <div class="row">
-                        <label for="spsa_pairs_per"> Pairs-Per </label> <input value="8" id="spsa_pairs_per" name="spsa_pairs_per">
+                        <label for="spsa_pairs_per"> ペア数/点 </label> <input value="8" id="spsa_pairs_per" name="spsa_pairs_per">
                     </div>
 
                 {% elif workload == "DATAGEN" %}
 
-                    <h3> Datagen Settings </h3>
+                    <h3> データ生成設定 </h3>
 
                     <div class="row">
-                        <label for="datagen_max_games"> Max Games </label> <input id="datagen_max_games" name="datagen_max_games">
+                        <label for="datagen_max_games"> 最大対局数 </label> <input id="datagen_max_games" name="datagen_max_games">
                     </div>
 
                     <div class="row">
-                        <label for="datagen_custom_genfens"> Genfens Args </label> <input id="datagen_custom_genfens" name="datagen_custom_genfens">
+                        <label for="datagen_custom_genfens"> Genfens 引数 </label> <input id="datagen_custom_genfens" name="datagen_custom_genfens">
                     </div>
 
                     <div class="row">
-                        <label for="test_mode"> Play Reverses </label>
+                        <label for="test_mode"> 先後反転 </label>
                         <select id="datagen_play_reverses" name="datagen_play_reverses">
                             <option value="YES"> Yes </option>
                             <option selected value="NO"> No </option>
@@ -202,10 +202,10 @@
 
                 {% endif %}
 
-                <h3> General Settings </h3>
+                <h3> 全般設定 </h3>
 
                 <div class="row">
-                    <label for="book_name"> Opening Book </label> <select id="book_name" name="book_name">
+                    <label for="book_name"> 開始局面集 </label> <select id="book_name" name="book_name">
                     <option selected value="NONE"> None </option>
                     {% for name, data in config.books.items %}
                         <option value="{{ name }}">{{ name }}</option>
@@ -214,7 +214,7 @@
                 </div>
 
                 <div class="row">
-                    <label for="upload_pgns"> Upload PGNs </label>
+                    <label for="upload_pgns"> 棋譜保存 </label>
                     <select id="upload_pgns" name="upload_pgns">
                         {% if workload == "DATAGEN" %}
                             <option selected value="COMPACT"> Compact </option>
@@ -228,16 +228,16 @@
                 </div>
 
                 <div class="row">
-                    <label for="priority"> Priority </label> <input value="0" id="priority" name="priority">
+                    <label for="priority"> 優先度 </label> <input value="0" id="priority" name="priority">
                 </div>
 
                 <div class="row">
-                    <label for="throughput"> Throughput </label> <input value="1000" id="throughput" , name="throughput">
+                    <label for="throughput"> スループット </label> <input value="1000" id="throughput" , name="throughput">
                 </div>
 
                 {% if workload == "TEST" or workload == "DATAGEN" %}
                     <div class="row">
-                        <label for="workload_size"> Workload Size </label> <input id="workload_size" name="workload_size">
+                        <label for="workload_size"> 割当サイズ </label> <input id="workload_size" name="workload_size">
                     </div>
                 {% endif %}
 
@@ -253,9 +253,9 @@
                     </select>
                 </div>
 
-                <h3> Adjudication Settings </h3>
+                <h3> 判定設定 </h3>
                 <div class="row">
-                    <label for="syzygy_adj"> Syzygy ADJ. </label>
+                    <label for="syzygy_adj"> Syzygy 判定 </label>
                     <select id="syzygy_adj" name="syzygy_adj">
                         <option value="DISABLED"> Disabled </option>
                         <option selected value="OPTIONAL"> Optional </option>
@@ -267,27 +267,27 @@
                     </select>
                 </div>
                 <div class="row">
-                    <label for="win_adj"> Win ADJ. </label> <input id="win_adj" name="win_adj">
+                    <label for="win_adj"> 勝ち判定 </label> <input id="win_adj" name="win_adj">
                 </div>
                 <div class="row">
-                    <label for="draw_adj"> Draw ADJ. </label> <input id="draw_adj" name="draw_adj">
+                    <label for="draw_adj"> 引き分け判定 </label> <input id="draw_adj" name="draw_adj">
                 </div>
 
-                <h3> Scaling Settings </h3>
+                <h3> スケーリング設定 </h3>
                 <div class="row">
-                    <label for="scale_method"> Scale Method </label>
+                    <label for="scale_method"> スケール基準 </label>
                     <select id="scale_method" name="scale_method">
                         {% if workload == "TEST" or workload == "DATAGEN" %}
-                            <option value="DEV"> Dev Engine </option>
-                            <option value="BASE"> Base Engine </option>
-                            <option value="BOTH"> Both Engines </option>
+                            <option value="DEV"> Dev エンジン </option>
+                            <option value="BASE"> Base エンジン </option>
+                            <option value="BOTH"> 両エンジン </option>
                         {% else %}
                             <option selected value="DEV"> Engine </option>
                         {% endif %}
                     </select>
                 </div>
                 <div class="row">
-                    <label for="scale_nps"> Expected NPS </label> <input id="scale_nps" name="scale_nps">
+                    <label for="scale_nps"> 想定NPS </label> <input id="scale_nps" name="scale_nps">
                 </div>
             </div>
         </div>

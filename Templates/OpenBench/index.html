@@ -11,7 +11,7 @@
 
             <!-- Currently Pending tests (Waiting to be approved) -->
             {% if pending %}
-                <tr class="table-header"><th colspan='6'>Pending</th></tr>
+                <tr class="table-header"><th colspan='6'>承認待ち</th></tr>
                 {% for test in pending %}
                     <tr>
                         {% include "OpenBench/Blocks/testsummary.html" %}
@@ -22,7 +22,7 @@
 
             <!-- Currently Awaiting tests (Waiting for Artifacts) -->
             {% if awaiting %}
-                <tr class="table-header"><th colspan='6'>Awaiting Artifacts</th></tr>
+                <tr class="table-header"><th colspan='6'>ビルド成果物待ち</th></tr>
                 {% for test in awaiting %}
                     <tr>
                         {% include "OpenBench/Blocks/testsummary.html" %}
@@ -33,7 +33,7 @@
 
             <!-- Currently Running tests (Waiting to be completed) -->
             {% if active %}
-                <tr class="table-header"><th colspan='6'>Active {{status}}</th></tr>
+                <tr class="table-header"><th colspan='6'>実行中 {{status}}</th></tr>
                 {% for test in active %}
 
                     <!-- Add two empty rows ( for the colouring scheme ) when changing prio -->
@@ -54,7 +54,7 @@
         {% endif %}
 
         <!-- Tests which have already finished -->
-        <tr class="table-header"><th colspan='6'>Finished</th></tr>
+        <tr class="table-header"><th colspan='6'>完了</th></tr>
         {% for test in completed %}
             <tr>
                 {% include "OpenBench/Blocks/testsummary.html" %}

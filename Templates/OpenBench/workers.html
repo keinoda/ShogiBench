@@ -9,15 +9,14 @@
 
 {% block content %}
 
-    <h3>Worker Keys</h3>
+    <h3>ワーカーキー</h3>
 
     <p>
-        Worker Keys are dedicated credentials for connecting worker machines,
-        such as rented vast.ai instances, to this server. On the worker, set
-        <code>OPENBENCH_USERNAME</code> to your username and
-        <code>OPENBENCH_PASSWORD</code> to a Worker Key token. Your account
-        password never has to be copied onto a rented machine, and a leaked
-        token can simply be deleted here. Tokens cannot log into this website.
+        ワーカーキーは、vast.ai などのワーカーマシンをこのサーバーに接続するための
+        専用の資格情報です。ワーカー側では <code>OPENBENCH_USERNAME</code> に
+        ユーザー名を、<code>OPENBENCH_PASSWORD</code> にキーのトークンを設定します。
+        アカウントのパスワードを借りたマシンに置く必要はなく、トークンが漏れても
+        このページで削除するだけで無効化できます。トークンでは Web にログインできません。
     </p>
 
     <form method="POST" action="/workers/">
@@ -26,10 +25,10 @@
         <div class="form">
             <div class="col">
                 <div class="row">
-                    <label for="name">Key Name</label>
+                    <label for="name">キー名</label>
                     <input id="name" type="text" name="name" placeholder="vastai-rtx4090">
                 </div>
-                <input type="submit" value="Create Worker Key" class="anchorbutton btn-blue w-100">
+                <input type="submit" value="ワーカーキーを作成" class="anchorbutton btn-blue w-100">
             </div>
         </div>
     </form>
@@ -40,12 +39,12 @@
         <table class="hoverable">
 
             <tr class="table-header">
-                <th>Name</th>
-                <th>Token</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Last Used</th>
-                <th>Actions</th>
+                <th>名前</th>
+                <th>トークン</th>
+                <th>状態</th>
+                <th>作成</th>
+                <th>最終使用</th>
+                <th>操作</th>
             </tr>
 
             {% for key in keys %}
@@ -53,15 +52,15 @@
                     <td>{{key.name}}</td>
                     <td>
                         <code id="token-{{key.id}}">{{key.token}}</code>
-                        <a class="anchorbutton btn-blue" onclick="copy_text('token-{{key.id}}', false)">Copy</a>
+                        <a class="anchorbutton btn-blue" onclick="copy_text('token-{{key.id}}', false)">コピー</a>
                     </td>
-                    <td>{{key.enabled|yesno:"Enabled,Disabled"}}</td>
+                    <td>{{key.enabled|yesno:"有効,無効"}}</td>
                     <td><span class="timestamp">{{key.created|date:"U"}}</span></td>
                     <td>
                         {% if key.last_used %}
                             <span class="timestamp">{{key.last_used|date:"U"}}</span>
                         {% else %}
-                            Never
+                            未使用
                         {% endif %}
                     </td>
                     <td>
@@ -69,14 +68,14 @@
                             {% csrf_token %}
                             <input type="hidden" name="key_id" value="{{key.id}}">
                             <input type="hidden" name="action" value="{{key.enabled|yesno:'disable,enable'}}">
-                            <input type="submit" value="{{key.enabled|yesno:'Disable,Enable'}}" class="anchorbutton btn-blue">
+                            <input type="submit" value="{{key.enabled|yesno:'無効化,有効化'}}" class="anchorbutton btn-blue">
                         </form>
                         <form method="POST" action="/workers/" style="display: inline;">
                             {% csrf_token %}
                             <input type="hidden" name="key_id" value="{{key.id}}">
                             <input type="hidden" name="action" value="delete">
-                            <input type="submit" value="Delete" class="anchorbutton btn-red"
-                                onclick="return confirm('Delete Worker Key {{key.name}}?');">
+                            <input type="submit" value="削除" class="anchorbutton btn-red"
+                                onclick="return confirm('ワーカーキー {{key.name}} を削除しますか?');">
                         </form>
                     </td>
                 </tr>
@@ -86,22 +85,21 @@
 
         <br>
 
-        <h3>Connect an Instance over SSH</h3>
+        <h3>SSHでインスタンスを接続</h3>
 
         <p>
-            Paste the instance's SSH address (e.g. vast.ai's
-            <code>ssh -p 12345 root@ssh4.vast.ai</code>, or <code>host:port</code>)
-            and the server will log in, install everything, and start the worker
-            for you. For this to work, the instance must accept the following
-            public key — add it once to your vast.ai account under
-            <i>Account &rsaquo; SSH Keys</i>, and every new instance will include
-            it automatically. For an already-running instance, append it to
-            <code>~/.ssh/authorized_keys</code>, or attach it from the vast.ai
-            console if available.
+            インスタンスのSSHアドレス(vast.ai の
+            <code>ssh -p 12345 root@ssh4.vast.ai</code> や <code>host:port</code> 形式)を
+            貼り付けると、サーバーがログインして依存関係のインストールからワーカーの
+            起動まで自動で行います。前提として、インスタンスが以下の公開鍵を受け入れる
+            必要があります。vast.ai の <i>Account › SSH Keys</i> に一度登録しておけば、
+            以後の新しいインスタンスには自動で入ります。起動済みのインスタンスには
+            <code>~/.ssh/authorized_keys</code> に追記するか、vast.ai コンソールから
+            アタッチしてください。
         </p>
 
         <pre id="ssh-public-key" style="white-space: pre-wrap; word-break: break-all;">{{ssh_public_key}}</pre>
-        <a class="anchorbutton btn-blue" onclick="copy_text('ssh-public-key', false)">Copy Public Key</a>
+        <a class="anchorbutton btn-blue" onclick="copy_text('ssh-public-key', false)">公開鍵をコピー</a>
 
         <br><br>
 
@@ -110,12 +108,12 @@
             <div class="form">
                 <div class="col">
                     <div class="row">
-                        <label for="ssh_target">SSH Address</label>
+                        <label for="ssh_target">SSHアドレス</label>
                         <input id="ssh_target" type="text" name="ssh_target"
                             placeholder="ssh -p 12345 root@ssh4.vast.ai">
                     </div>
                     <div class="row">
-                        <label for="key_id">Worker Key</label>
+                        <label for="key_id">ワーカーキー</label>
                         <select id="key_id" name="key_id">
                             {% for key in keys %}
                                 {% if key.enabled %}
@@ -125,23 +123,23 @@
                         </select>
                     </div>
                     <div class="row">
-                        <label for="threads">Threads</label>
-                        <input id="threads" type="text" name="threads" placeholder="(default: all cores)">
+                        <label for="threads">スレッド数</label>
+                        <input id="threads" type="text" name="threads" placeholder="(既定: 全コア)">
                     </div>
-                    <input type="submit" value="Connect &amp; Start Worker" class="anchorbutton btn-blue w-100">
+                    <input type="submit" value="接続してワーカーを起動" class="anchorbutton btn-blue w-100">
                 </div>
             </div>
         </form>
 
         <br>
 
-        <h3>Connecting a Worker Manually</h3>
+        <h3>手動でワーカーを接続する</h3>
 
         {% with keys.first as newest %}
             <p>
-                Run the following on the worker machine (adjust the thread count).
-                For a vast.ai template, place it in the <i>On-start Script</i>, or
-                pass the exports as environment variables.
+                ワーカーマシン上で以下を実行してください(スレッド数は適宜調整)。
+                vast.ai のテンプレートなら <i>On-start Script</i> に貼るか、
+                export の内容を環境変数として設定します。
             </p>
 
             <pre id="worker-snippet">export OPENBENCH_SERVER={{server_url}}
@@ -151,7 +149,7 @@ git clone --depth 1 -b {{config.client_repo_ref}} {{config.client_repo_url}} sho
 cd shogibench/Client
 pip3 install -r requirements.txt
 python3 client.py -T $(nproc) -N 1</pre>
-            <a class="anchorbutton btn-blue" onclick="copy_text('worker-snippet', false)">Copy Snippet</a>
+            <a class="anchorbutton btn-blue" onclick="copy_text('worker-snippet', false)">スニペットをコピー</a>
         {% endwith %}
     {% endif %}
 

@@ -507,3 +507,26 @@ td pre {
     border-radius: 8px;
 }
 
+
+/* Readable defaults for bare text elements on the dark theme. Without
+   these, <p>/<pre>/<code>/<h3> render browser-default black on #222. */
+
+#content {
+    color: var(--color-font1);
+}
+
+#content pre, #content code {
+    background-color: #171717;
+    color: var(--color-font1);
+}
+
+#content pre {
+    padding: 10px 14px;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+#content p {
+    white-space: normal;
+}
