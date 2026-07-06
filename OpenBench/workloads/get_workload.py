@@ -36,7 +36,7 @@ from OpenBench.models import Network, Result, Test
 def network_aux_files(engine, sha):
 
     # Every auxiliary file travelling with a Network (eg progress.bin,
-    # usi_options.txt), as [{name, sha}] for the worker to stage
+    # eval_options.txt), as [{name, sha}] for the worker to stage
     if not sha or sha == 'None':
         return []
     network = Network.objects.filter(engine=engine, sha256=sha).first()

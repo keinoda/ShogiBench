@@ -306,12 +306,12 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
    - engine config の `build.network_aux_options` に載っている名前のファイル
      (例: `"progress.bin": "ProgressFilePath"`)は、そのパスが対応する
      USIオプションとして渡されます
-   - **`usi_options.txt`** という名前のファイルは特別扱いで、`Name=Value` を
+   - **`eval_options.txt`** という名前のファイルは特別扱いで、`Name=Value` を
      1行ずつ書いておくと **bench と対局の両方で必ず setoption として適用**
      されます(`#` 以降はコメント)。評価関数ごとに指定が必須のオプション
      (バケット選択方式など)は、ここに書いてネットと一緒に登録しておけば
      指定漏れが起きません。**値に空白は使えません**
-   - 注意: `usi_options.txt` の内容は bench 結果にも影響するため、
+   - 注意: `eval_options.txt` の内容は bench 結果にも影響するため、
      オプションを変えると bench 値も変わります(Bench欄は空欄=照合なしが
      便利です)
 5. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
@@ -332,7 +332,7 @@ nohup curl -sS -X POST https://<あなたのサーバー>/scripts/ \
   -F name=mynet.bin \
   -F username=<ユーザー名> -F password=<アカウントのパスワード> \
   -F netfile=@/path/to/nn.bin \
-  -F auxfiles=@/path/to/usi_options.txt \
+  -F auxfiles=@/path/to/eval_options.txt \
   -F auxfiles=@/path/to/progress.bin > upload.log 2>&1 &
 ```
 

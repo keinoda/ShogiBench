@@ -196,7 +196,7 @@ class NetworkUploadTests(TestCase):
             self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/withaux.bin/', {
                 'netfile'  : SimpleUploadedFile('nn.bin', content),
                 'auxfiles' : [SimpleUploadedFile('progress.bin', aux),
-                              SimpleUploadedFile('usi_options.txt', opts)] })
+                              SimpleUploadedFile('eval_options.txt', opts)] })
 
             network = Network.objects.filter(engine='YaneuraOu-nagisa', name='withaux.bin').first()
             self.assertIsNotNone(network)
@@ -207,7 +207,7 @@ class NetworkUploadTests(TestCase):
             response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/progress.bin/' % (network.sha256))
             self.assertEqual(b''.join(response.streaming_content), aux)
 
-            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/usi_options.txt/' % (network.sha256))
+            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/eval_options.txt/' % (network.sha256))
             self.assertEqual(b''.join(response.streaming_content), opts)
 
     def test_upload_with_legacy_single_aux_field(self):
