@@ -21,7 +21,7 @@
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
 from OpenBench.models import Profile, SSHCredential, WorkerKey
 from OpenBench.views import parse_ssh_target
@@ -225,6 +225,23 @@ class WorkerConnectTests(TestCase):
         self.assertIn(self.key.token, command)
         self.assertIn('OPENBENCH_USERNAME=alice', command)
         self.assertIn('shogibench_setup.sh', command)
+
+    @override_settings(PUBLIC_URL='https://bench.example.com')
+    @patch('OpenBench.views.paramiko.SSHClient')
+    def test_connect_uses_configured_public_url(self, mock_ssh_client):
+        self.client.get('/workers/')
+
+        connection = mock_ssh_client.return_value
+        stdout = MagicMock(); stdout.readline.return_value = 'LAUNCHED\n'
+        connection.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+
+        self.client.post('/workers/connect/', {
+            'ssh_target' : 'ssh4.vast.ai:12345',
+            'key_id'     : self.key.id,
+        })
+
+        command = connection.exec_command.call_args.args[0]
+        self.assertIn('OPENBENCH_SERVER=https://bench.example.com/', command)
 
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_failure_reports_error(self, mock_ssh_client):
