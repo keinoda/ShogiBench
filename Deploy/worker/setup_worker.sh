@@ -72,9 +72,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # Normalize the server URL: an http:// URL gets 301-redirected to https,
 # which turns the client's POSTs into empty GETs and breaks authentication.
 # Follow one redirect and adopt the corrected base URL.
-REDIRECT=$(curl -s -o /dev/null -w '%{redirect_url}' -X POST "${OPENBENCH_SERVER%/}/clientVersionRef/" || true)
+REDIRECT=$(curl -s -o /dev/null -w '%{redirect_url}' "${OPENBENCH_SERVER%/}/clientGetBuildInfo/" || true)
 if [ -n "$REDIRECT" ]; then
-    OPENBENCH_SERVER="${REDIRECT%clientVersionRef/}"
+    OPENBENCH_SERVER="${REDIRECT%clientGetBuildInfo/}"
     export OPENBENCH_SERVER
     echo "[setup_worker] Server redirected; using $OPENBENCH_SERVER instead"
 fi
