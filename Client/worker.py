@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 45 # Client version to send to the Server
+CLIENT_VERSION   = 46 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -1226,7 +1226,7 @@ def safe_download_network_weights(config, branch):
     credentials = (config.server, config.username, config.password)
     utils.download_network(*credentials, engine, net_name, net_sha, net_path)
 
-    # Auxiliary files (eg progress.bin, usi_options.txt), addressed via
+    # Auxiliary files (eg progress.bin, eval_options.txt), addressed via
     # the main Network and fetched by their original filename
     for aux in aux_list:
         aux_path = os.path.join('Networks', aux['sha'])
@@ -1338,10 +1338,11 @@ def stage_network_options(config, branch, prefix=''):
     # Every auxiliary file goes next to the Network under its original
     # name. Files with an entry in build.network_aux_options additionally
     # get their path passed as that USI option (eg progress.bin ->
-    # ProgressFilePath). A file named usi_options.txt is special: each
+    # ProgressFilePath). A file named eval_options.txt is special: each
     # "Name=Value" line becomes a setoption, so per-eval mandatory
     # settings travel with the Network and can never be forgotten
     aux_options = build_conf.get('network_aux_options', {})
+    extra_pairs = []
 
     for aux in test.get('network_aux_files', []):
 
@@ -1353,16 +1354,26 @@ def stage_network_options(config, branch, prefix=''):
         if aux['name'] in aux_options:
             pairs.append((aux_options[aux['name']], os.path.join(prefix, staged_aux)))
 
-        if aux['name'].lower() == 'usi_options.txt':
-            pairs += parse_usi_options_file(staged_aux)
+        if aux['name'].lower() == 'eval_options.txt':
+            extra_pairs += parse_eval_options_file(staged_aux)
+
+    # The worker owns the file-location options: an eval_options.txt that
+    # tries to override them (eg EvalDir=eval) would silently point the
+    # engine at a nonexistent eval, so those lines are dropped
+    managed = { name.lower() for name, value in pairs }
+    for name, value in extra_pairs:
+        if name.lower() in managed:
+            print ('Ignoring eval_options.txt line: %s is managed by the worker' % (name))
+            continue
+        pairs.append((name, value))
 
     return pairs
 
-def parse_usi_options_file(path):
+def parse_eval_options_file(path):
 
-    ## "Name=Value" lines from a Network's usi_options.txt, applied to the
-    ## engine at both bench and game time. '#' starts a comment. Values
-    ## must not contain spaces: the match runner splits on whitespace.
+    ## "Name=Value" lines from a Network's eval_options.txt, applied to
+    ## the engine at both bench and game time. '#' starts a comment.
+    ## Values must not contain spaces: the match runner splits on them.
 
     pairs = []
     with open(path, encoding='utf-8-sig') as fin:
@@ -1371,7 +1382,7 @@ def parse_usi_options_file(path):
             if not line:
                 continue
             if '=' not in line or ' ' in line:
-                print ('Ignoring malformed usi_options.txt line: %s' % (line))
+                print ('Ignoring malformed eval_options.txt line: %s' % (line))
                 continue
             name, value = line.split('=', 1)
             pairs.append((name, value))
@@ -1389,6 +1400,8 @@ def safe_run_benchmarks(config, branch, engine, network):
     # Engines that take their Network as a runtime option need it for the
     # bench as well; the bench runs from the Client root (prefix '')
     usi_options = stage_network_options(config, branch, prefix='')
+    for opt_name, opt_value in usi_options:
+        print ('Bench option for %s: %s = %s' % (name, opt_name, opt_value))
 
     # Optional engine-config patterns that turn warnings in the bench
     # output (eg a wrong-architecture eval file) into visible failures

@@ -280,7 +280,7 @@ class Network(Model):
 class NetworkAuxFile(Model):
 
     # Auxiliary files travel with a Network (eg YaneuraOu's progress.bin,
-    # or a usi_options.txt with per-eval mandatory settings). Stored in
+    # or a eval_options.txt with per-eval mandatory settings). Stored in
     # /Media/ under their own hash; workers stage every one of them into
     # the same directory as the network file, under its original name
     network = ForeignKey(Network, on_delete=CASCADE, related_name='aux_files')

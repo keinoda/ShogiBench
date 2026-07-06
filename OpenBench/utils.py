@@ -322,7 +322,7 @@ def network_upload(request, engine, name):
     if engine not in OPENBENCH_CONFIG['engines'].keys():
         return OpenBench.views.redirect(request, '/networks/', error='No Engine found with matching name')
 
-    # Optional auxiliary files (eg progress.bin, usi_options.txt), any
+    # Optional auxiliary files (eg progress.bin, eval_options.txt), any
     # number of them, hashed the same way. Workers stage every one of
     # these into the same directory as the network, under this filename
     aux_files = []
