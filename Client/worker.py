@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 51 # Client version to send to the Server
+CLIENT_VERSION   = 52 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -513,7 +513,7 @@ class MatchRunner:
         # unknowable when the test is created (eg LS_PROGRESS_COEFF=
         # {DIR}/coeff.bin, pointing at one of the network's aux files)
         if '{DIR}' in options:
-            staged_dir = staged_network_dir(config, branch, prefix='..')
+            staged_dir = staged_network_dir(config, branch)
             if not staged_dir:
                 print ('Warning: {DIR} used, but %s has no staged network directory' % (branch))
             options = options.replace('{DIR}', staged_dir)
@@ -1313,25 +1313,26 @@ def safe_create_genfens_opening_book(config, dev_name, dev_network):
             ServerReporter.report_engine_error(config, error.message)
             raise
 
-def staged_network_dir(config, branch, prefix=''):
+def staged_network_dir(config, branch):
 
     ## The directory stage_network_options() stages this branch's Network
-    ## into, or '' when the branch has no directory-style Network
+    ## into (absolute), or '' when the branch has no directory-style Network
 
     test = config.workload['test'][branch]
     if test['private'] or not test['build'].get('network_filename'):
         return ''
     if not test['network'] or test['network'] == 'None':
         return ''
-    return os.path.join(prefix, 'Networks', '%s-dir' % (test['network']))
+    return os.path.abspath(os.path.join('Networks', '%s-dir' % (test['network'])))
 
 def stage_network_options(config, branch, prefix=''):
 
     ## Returns [(option, value)] pairs pointing a public engine at its
     ## Network files at runtime (build.network_option engines), staging
-    ## directory-style files (build.network_filename) as needed. prefix
-    ## adjusts the paths for the engine's working directory: '' when run
-    ## from the Client root (bench), '..' when run from Engines/ (games).
+    ## directory-style files (build.network_filename) as needed. Paths are
+    ## passed as absolute: engines disagree on how to resolve relative
+    ## ones (older YaneuraOu uses the working directory, newer ones the
+    ## executable's directory), and absolute paths satisfy them all.
 
     test       = config.workload['test'][branch]
     build_conf = test['build']
@@ -1344,7 +1345,7 @@ def stage_network_options(config, branch, prefix=''):
         return []
 
     if not net_fname:
-        return [(net_option, os.path.join(prefix, 'Networks', network))]
+        return [(net_option, os.path.abspath(os.path.join('Networks', network)))]
 
     # Directory-style engines (YaneuraOu's EvalDir) expect a fixed file
     # name inside a directory: stage Networks/<sha>-dir/<name>
@@ -1355,7 +1356,7 @@ def stage_network_options(config, branch, prefix=''):
         try: os.link(os.path.join('Networks', network), staged)
         except OSError: shutil.copyfile(os.path.join('Networks', network), staged)
 
-    pairs = [(net_option, os.path.join(prefix, dir_path))]
+    pairs = [(net_option, os.path.abspath(dir_path))]
 
     # Every auxiliary file goes next to the Network under its original
     # name. Files with an entry in build.network_aux_options additionally
@@ -1374,7 +1375,7 @@ def stage_network_options(config, branch, prefix=''):
             except OSError: shutil.copyfile(os.path.join('Networks', aux['sha']), staged_aux)
 
         if aux['name'] in aux_options:
-            pairs.append((aux_options[aux['name']], os.path.join(prefix, staged_aux)))
+            pairs.append((aux_options[aux['name']], os.path.abspath(staged_aux)))
 
         if aux['name'].lower() == 'eval_options.txt':
             extra_pairs += parse_eval_options_file(staged_aux)
@@ -1390,7 +1391,7 @@ def stage_network_options(config, branch, prefix=''):
         if name.lower() in managed:
             print ('Ignoring eval_options.txt line: %s is managed by the worker' % (name))
             continue
-        pairs.append((name, value.replace('{DIR}', os.path.join(prefix, dir_path))))
+        pairs.append((name, value.replace('{DIR}', os.path.abspath(dir_path))))
 
     return pairs
 
