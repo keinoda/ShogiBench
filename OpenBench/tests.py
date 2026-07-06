@@ -219,6 +219,45 @@ class BuildCommandNormalizationTests(TestCase):
         args, dropped = normalize_build_command('make CXX=g++ EXTRA=1')
         self.assertEqual(args, 'EXTRA=1')
 
+    def test_full_yaneuraou_paste(self):
+        import shlex
+        pasted = '''cd YaneuraOu/source
+
+make clean YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE_HALFKP_768X2_16_64
+
+make -j"$(nproc)" tournament \\
+
+  COMPILER=clang++ \\
+
+  YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE_HALFKP_768X2_16_64 \\
+
+  ENGINE_NAME="Suisho10beta2" \\
+
+  TARGET_CPU=AVX2 \\
+
+  EXTRA_CPPFLAGS='-DHASH_KEY_BITS=128 -DTT_CLUSTER_SIZE=4'
+'''
+        args, dropped = normalize_build_command(pasted)
+
+        # The worker re-splits with shlex: quoting must round-trip exactly
+        self.assertEqual(shlex.split(args), [
+            'tournament',
+            'COMPILER=clang++',
+            'YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE_HALFKP_768X2_16_64',
+            'ENGINE_NAME=Suisho10beta2',
+            'TARGET_CPU=AVX2',
+            'EXTRA_CPPFLAGS=-DHASH_KEY_BITS=128 -DTT_CLUSTER_SIZE=4',
+        ])
+
+        # cd and clean lines are ignored, make/-j are managed by the worker
+        self.assertIn('make', dropped)
+        self.assertIn('-j$(nproc)', dropped)
+
+    def test_bare_j_with_separate_count(self):
+        args, dropped = normalize_build_command('make -j 8 normal FOO=1')
+        self.assertEqual(args, 'normal FOO=1')
+        self.assertIn('8', dropped)
+
 class BuildVariantPageTests(TestCase):
 
     def setUp(self):
