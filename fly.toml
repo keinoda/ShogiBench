@@ -28,7 +28,7 @@ primary_region = 'nrt'
   destination = '/data'
 
 [http_service]
-  internal_port = 8000
+  internal_port = 8080
   force_https = true
   # Workers polling the server will keep it awake while tests run. Set
   # min_machines_running = 1 if you prefer the UI to never cold-start.

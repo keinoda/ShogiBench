@@ -12,7 +12,7 @@ services:
       context: .
       dockerfile: Deploy/server/Dockerfile
     ports:
-      - '8000:8000'
+      - '8080:8080'
     environment:
       OPENBENCH_SECRET_KEY: ${OPENBENCH_SECRET_KEY:?generate one and keep it stable}
       OPENBENCH_DATA_DIR: /data
