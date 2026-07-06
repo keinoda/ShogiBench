@@ -34,15 +34,19 @@
         <div class="form">
              <div class="col">
                 <div class="row">
-                    <label for="network-name">Name</label>
+                    <label for="network-name">名前</label>
                     <input id="network-name" name="name">
                 </div>
                 <div class="row">
-                    <label for="netfile">Weights</label>
+                    <label for="netfile">評価関数ファイル</label>
                     <input id="netfile" name="netfile" type="file">
                 </div>
                 <div class="row">
-                    <label for="network-engine">Engine</label>
+                    <label for="auxfile" title="progress.bin など。ワーカーで評価関数と同じディレクトリに配置されます">補助ファイル(任意)</label>
+                    <input id="auxfile" name="auxfile" type="file">
+                </div>
+                <div class="row">
+                    <label for="network-engine">エンジン</label>
                     <select id="network-engine" name="engine">
                     {% for engine in config.engines %}
                         {% if engine == profile.engine %}
@@ -53,7 +57,7 @@
                     {% endfor %}
                     </select>
                 </div>
-                <input type="submit" class="anchorbutton btn-blue w-100" value="Upload">
+                <input type="submit" class="anchorbutton btn-blue w-100" value="アップロード">
             </div>
         </div>
     <form>

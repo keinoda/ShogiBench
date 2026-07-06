@@ -185,6 +185,34 @@ class NetworkUploadTests(TestCase):
         self.assertIsNotNone(network)
         self.assertEqual(network.sha256, expected)
 
+    def test_upload_with_aux_file(self):
+        content = b'\x10\x20' * 50_000
+        aux     = b'\x30\x40' * 25_000
+        aux_sha = hashlib.sha256(aux).hexdigest()[:8].upper()
+
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/YaneuraOu/UPLOAD/withaux.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', content),
+                'auxfile' : SimpleUploadedFile('progress.bin', aux) })
+
+            network = Network.objects.filter(engine='YaneuraOu', name='withaux.bin').first()
+            self.assertIsNotNone(network)
+            self.assertEqual(network.aux_sha256, aux_sha)
+
+            # The aux file is retrievable through the api endpoint
+            response = self.client.post('/api/networks/YaneuraOu/%s/aux/' % (network.sha256))
+            body = b''.join(response.streaming_content)
+            self.assertEqual(body, aux)
+
+    def test_aux_endpoint_without_aux_errors(self):
+        with override_settings(MEDIA_ROOT=self.media):
+            self.client.post('/networks/Stoat/UPLOAD/noaux.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', b'plain') })
+            network = Network.objects.get(engine='Stoat', name='noaux.bin')
+            response = self.client.post('/api/networks/Stoat/%s/aux/' % (network.sha256))
+            self.assertIn('error', response.json())
+
     def test_upload_requires_approver(self):
         other = User.objects.create_user('bob', 'b@example.com', 'password2')
         Profile.objects.create(user=other, enabled=True, approver=False)
@@ -257,6 +285,30 @@ make -j"$(nproc)" tournament \\
         args, dropped = normalize_build_command('make -j 8 normal FOO=1')
         self.assertEqual(args, 'normal FOO=1')
         self.assertIn('8', dropped)
+
+    def test_suisho11_paste_with_target_and_cd_chain(self):
+        import shlex
+        pasted = '''cd /root/YaneuraOu/source && \\
+    make -j"$(nproc)" \\
+      YANEURAOU_EDITION=YANEURAOU_ENGINE_SFNN_halfka2_1024_7_64_k3k3 \\
+      PYTHON=python3 \\
+      TARGET_CPU=AVX512VNNI \\
+      COMPILER=clang++ \\
+      TARGET=/usr/local/bin/Suisho11-YaneuraOu-tournament-avx512vnni \\
+      tournament'''
+        args, dropped = normalize_build_command(pasted)
+
+        self.assertEqual(shlex.split(args), [
+            'YANEURAOU_EDITION=YANEURAOU_ENGINE_SFNN_halfka2_1024_7_64_k3k3',
+            'PYTHON=python3',
+            'TARGET_CPU=AVX512VNNI',
+            'COMPILER=clang++',
+            'tournament',
+        ])
+
+        # TARGET= (the output path) is managed by the worker; TARGET_CPU stays
+        self.assertIn('TARGET=/usr/local/bin/Suisho11-YaneuraOu-tournament-avx512vnni', dropped)
+        self.assertIn('-j$(nproc)', dropped)
 
 class BuildVariantPageTests(TestCase):
 

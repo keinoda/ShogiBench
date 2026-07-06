@@ -322,13 +322,24 @@ def network_upload(request, engine, name):
     if engine not in OPENBENCH_CONFIG['engines'].keys():
         return OpenBench.views.redirect(request, '/networks/', error='No Engine found with matching name')
 
-    # Save the file locally into /Media/ if we don't already have this file
+    # Optional auxiliary file (eg progress.bin), hashed the same way
+    aux_sha = ''
+    if (auxfile := request.FILES.get('auxfile')):
+        aux = hashlib.sha256()
+        for chunk in auxfile.chunks():
+            aux.update(chunk)
+        aux_sha = aux.hexdigest()[:8].upper()
+
+    # Save the files locally into /Media/ if we don't already have them
     if not Network.objects.filter(sha256=sha256):
         FileSystemStorage().save('%s' % (sha256), netfile)
 
+    if aux_sha and not os.path.exists(os.path.join(MEDIA_ROOT, aux_sha)):
+        FileSystemStorage().save('%s' % (aux_sha), auxfile)
+
     # Create the Network object mapping to the saved local file
     Network.objects.create(
-        sha256=sha256, name=name,
+        sha256=sha256, name=name, aux_sha256=aux_sha,
         engine=engine, author=request.user.username)
 
     # Redirect to Engine specific view, to add clarity
@@ -364,6 +375,18 @@ def network_download(request, engine, network):
     response['Expires'] = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).ctime()
     response['Content-Length'] = os.path.getsize(netfile)
     response['Content-Disposition'] = 'attachment; filename=' + network.sha256
+    return response
+
+def network_download_aux(request, engine, network):
+
+    # Same as network_download, but for the auxiliary file (eg progress.bin)
+    netfile  = os.path.join(MEDIA_ROOT, network.aux_sha256)
+    fwrapper = FileWrapper(open(netfile, 'rb'), 8192)
+    response = FileResponse(fwrapper, content_type='application/octet-stream')
+
+    response['Expires'] = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).ctime()
+    response['Content-Length'] = os.path.getsize(netfile)
+    response['Content-Disposition'] = 'attachment; filename=' + network.aux_sha256
     return response
 
 def network_edit(request, engine, network):

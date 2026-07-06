@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 41 # Client version to send to the Server
+CLIENT_VERSION   = 42 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -505,8 +505,9 @@ class MatchRunner:
         # Public engines whose Makefile cannot embed a Network (no EVALFILE
         # support, eg YaneuraOu) receive it as a runtime option instead, when
         # the engine config sets build.network_option
-        net_option = config.workload['test'][branch]['build'].get('network_option')
-        net_fname  = config.workload['test'][branch]['build'].get('network_filename')
+        build_conf = config.workload['test'][branch]['build']
+        net_option = build_conf.get('network_option')
+        net_fname  = build_conf.get('network_filename')
         if not private and net_option and network and network != 'None':
 
             if net_fname:
@@ -519,6 +520,19 @@ class MatchRunner:
                     try: os.link(os.path.join('Networks', network), staged)
                     except OSError: shutil.copyfile(os.path.join('Networks', network), staged)
                 options += ' %s=%s' % (net_option, os.path.join('..', dir_path))
+
+                # Auxiliary file (eg progress.bin) goes next to the Network,
+                # and its path option points into the same directory
+                aux_sha    = config.workload['test'][branch].get('network_aux', '')
+                aux_option = build_conf.get('network_aux_option')
+                aux_fname  = build_conf.get('network_aux_filename')
+                if aux_sha and aux_fname:
+                    staged_aux = os.path.join(dir_path, aux_fname)
+                    if not os.path.exists(staged_aux):
+                        try: os.link(os.path.join('Networks', aux_sha), staged_aux)
+                        except OSError: shutil.copyfile(os.path.join('Networks', aux_sha), staged_aux)
+                    if aux_option:
+                        options += ' %s=%s' % (aux_option, os.path.join('..', staged_aux))
 
             else:
                 options += ' %s=%s' % (net_option, os.path.join('../Networks', network))
@@ -1231,6 +1245,7 @@ def safe_download_network_weights(config, branch):
     engine   = config.workload['test'][branch]['engine' ]
     net_name = config.workload['test'][branch]['netname']
     net_sha  = config.workload['test'][branch]['network']
+    aux_sha  = config.workload['test'][branch].get('network_aux', '')
     net_path = os.path.join('Networks', net_sha)
 
     # Not all engines use Network files
@@ -1239,6 +1254,13 @@ def safe_download_network_weights(config, branch):
 
     credentials = (config.server, config.username, config.password)
     utils.download_network(*credentials, engine, net_name, net_sha, net_path)
+
+    # Auxiliary file (eg progress.bin), addressed via the main Network
+    if aux_sha:
+        aux_path = os.path.join('Networks', aux_sha)
+        endpoint = 'api/networks/%s/%s/aux' % (engine, net_sha)
+        utils.download_network(
+            *credentials, engine, '%s (aux)' % (net_name), aux_sha, aux_path, endpoint)
 
     return net_path
 
