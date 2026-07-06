@@ -16,7 +16,7 @@ body {
     background-color: var(--color1);
 
     font-size: 16px;
-    font-family: "Courier Prime", serif;
+    font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
     display:flex;
 }
 
@@ -529,4 +529,12 @@ td pre {
 
 #content p {
     white-space: normal;
+}
+
+/* Keep stats, tokens and snippets monospaced for alignment */
+
+#content pre, #content code,
+#content .statblock, #content .long-statblock,
+#content .timestamp, #content .numeric {
+    font-family: "Courier Prime", ui-monospace, "Cascadia Mono", Consolas, monospace;
 }

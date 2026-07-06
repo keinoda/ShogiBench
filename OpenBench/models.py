@@ -65,6 +65,24 @@ class WorkerKey(Model):
     def __str__(self):
         return '%s (%s)' % (self.name, self.user.username)
 
+class BuildVariant(Model):
+
+    # User-defined build variants, merged with the static ones defined in
+    # the engine's json config. Created on the /builds/ page by pasting a
+    # build command, which gets normalized into plain make arguments.
+
+    engine  = CharField(max_length=64)
+    name    = CharField(max_length=64)
+    args    = CharField(max_length=512)
+    author  = CharField(max_length=64)
+    created = DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('engine', 'name')
+
+    def __str__(self):
+        return '[%s] %s: %s' % (self.engine, self.name, self.args)
+
 class SSHCredential(Model):
 
     # Server-side SSH keypair used by the "Connect over SSH" feature on the
@@ -144,7 +162,7 @@ class Test(Model):
     dev_netname      = CharField(max_length=256, blank=True)
     dev_time_control = CharField(max_length=32)
     dev_build_name   = CharField(max_length=64,  default='default')
-    dev_build_args   = CharField(max_length=256, blank=True, default='')
+    dev_build_args   = CharField(max_length=512, blank=True, default='')
 
     # Base Engine, and all of its settings
     base              = ForeignKey('Engine', PROTECT, related_name='base')
@@ -155,7 +173,7 @@ class Test(Model):
     base_netname      = CharField(max_length=256, blank=True)
     base_time_control = CharField(max_length=32)
     base_build_name   = CharField(max_length=64,  default='default')
-    base_build_args   = CharField(max_length=256, blank=True, default='')
+    base_build_args   = CharField(max_length=512, blank=True, default='')
 
     # Changable Test Parameters
     workload_size = IntegerField(default=32)

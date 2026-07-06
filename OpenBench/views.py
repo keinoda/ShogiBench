@@ -300,6 +300,120 @@ def profile_config(request):
 
     return redirect(request, '/profile/', status=changes)
 
+def normalize_build_command(text):
+
+    ## Turns a pasted build command into the make arguments ShogiBench
+    ## stores for a Build Variant. Returns (args, dropped) where dropped
+    ## lists the tokens that were removed because the worker manages them
+    ## itself: the make invocation, -j, and EXE=/EVALFILE=/CXX=/CC=.
+
+    kept, dropped = [], []
+
+    for index, token in enumerate(shlex.split(text.strip())):
+
+        if index == 0 and token in ('make', 'gmake', 'mingw32-make', 'nmake'):
+            dropped.append(token)
+            continue
+
+        if re.match(r'^-j\d*$', token) or re.match(r'^(EXE|EVALFILE|CXX|CC)=', token, re.IGNORECASE):
+            dropped.append(token)
+            continue
+
+        kept.append(token)
+
+    return ' '.join(kept), dropped
+
+def engine_build_variants(engine):
+
+    ## Static variants from the engine's json config, merged with the
+    ## user-defined ones from the /builds/ page. Static names win.
+
+    variants = dict(OPENBENCH_CONFIG['engines'][engine]['build']['variants'])
+
+    for variant in BuildVariant.objects.filter(engine=engine).order_by('name'):
+        variants.setdefault(variant.name, variant.args)
+
+    return variants
+
+def builds(request):
+
+    ## Manage user-defined Build Variants. Pasting a full build command
+    ## normalizes it into make arguments automatically.
+
+    if not request.user.is_authenticated:
+        return redirect(request, '/login/')
+
+    profile = Profile.objects.filter(user=request.user).first()
+    if not profile or not profile.enabled:
+        return redirect(request, '/index/', error='Only enabled users can manage Build Variants')
+
+    if request.method == 'POST':
+
+        action = request.POST.get('action')
+
+        if action == 'create':
+
+            engine  = request.POST.get('engine', '')
+            name    = request.POST.get('name', '').strip()[:64]
+            command = request.POST.get('command', '').strip()
+
+            if engine not in OPENBENCH_CONFIG['engines']:
+                return redirect(request, '/builds/', error='Unknown engine')
+
+            if not re.match(r'^[\w.+()-]+$', name):
+                return redirect(request, '/builds/', error='Variant names may only contain letters, numbers, and ._+()-')
+
+            if name in OPENBENCH_CONFIG['engines'][engine]['build']['variants']:
+                return redirect(request, '/builds/', error='"%s" is a predefined variant of %s and cannot be changed' % (name, engine))
+
+            if not command:
+                return redirect(request, '/builds/', error='Provide a build command')
+
+            try:
+                args, dropped = normalize_build_command(command)
+            except ValueError:
+                return redirect(request, '/builds/', error='Unable to parse the build command')
+
+            if len(args) > 512:
+                return redirect(request, '/builds/', error='Build arguments are too long')
+
+            existing = BuildVariant.objects.filter(engine=engine, name=name).first()
+            if existing and existing.author != request.user.username and not profile.approver:
+                return redirect(request, '/builds/', error='"%s" already exists and belongs to %s' % (name, existing.author))
+
+            BuildVariant.objects.update_or_create(
+                engine=engine, name=name,
+                defaults={ 'args' : args, 'author' : request.user.username })
+
+            status = 'Saved [%s] %s = "%s"' % (engine, name, args)
+            if dropped:
+                status += '\nRemoved (managed by the worker): %s' % (' '.join(dropped))
+            return redirect(request, '/builds/', status=status)
+
+        if action == 'delete':
+
+            variant = BuildVariant.objects.filter(id=request.POST.get('variant_id', 0)).first()
+            if not variant:
+                return redirect(request, '/builds/', error='No such Build Variant')
+
+            if variant.author != request.user.username and not profile.approver:
+                return redirect(request, '/builds/', error='Only the author or an approver can delete this variant')
+
+            variant.delete()
+            return redirect(request, '/builds/', status='Deleted [%s] %s' % (variant.engine, variant.name))
+
+        return redirect(request, '/builds/', error='Unknown action')
+
+    data = {
+        'variants' : BuildVariant.objects.all().order_by('engine', 'name'),
+        'statics'  : {
+            engine : OPENBENCH_CONFIG['engines'][engine]['build']['variants']
+            for engine in OPENBENCH_CONFIG['engines']
+        },
+    }
+
+    return render(request, 'builds.html', data)
+
 def server_public_url(request):
 
     ## The URL workers must use to reach this server. Behind some proxies

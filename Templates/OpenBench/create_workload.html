@@ -7,6 +7,7 @@
     {{ config|json_script:"json-config" }}
     {{ networks|json_script:"json-networks" }}
     {{ profile.repos|json_script:"json-repos" }}
+    {{ build_variants|json_script:"json-build-variants" }}
 
     <script src="{% static 'create_workload.js' %}?{{ static_version }}"></script>
     <script src="{% static 'default_text.js' %}?{{ static_version }}"></script>
@@ -75,6 +76,10 @@
                     <label for="dev_build" > {{dev_text}} ビルド </label> <select id="dev_build" name="dev_build"></select>
                 </div>
                 <div class="row">
+                    <label for="dev_build_custom" title="入力するとビルド選択を上書きします"> {{dev_text}} ビルド引数 </label>
+                    <input id="dev_build_custom" name="dev_build_custom" placeholder="(任意) make引数を直接入力で上書き">
+                </div>
+                <div class="row">
                     <label for="dev_options"> {{dev_text}} オプション </label> <input id="dev_options" name="dev_options">
                 </div>
                 <div class="row">
@@ -96,6 +101,10 @@
                     </div>
                     <div class="row">
                         <label for="base_build"> Base ビルド </label> <select id="base_build" name="base_build"></select>
+                    </div>
+                    <div class="row">
+                        <label for="base_build_custom" title="入力するとビルド選択を上書きします"> Base ビルド引数 </label>
+                        <input id="base_build_custom" name="base_build_custom" placeholder="(任意) make引数を直接入力で上書き">
                     </div>
                     <div class="row">
                         <label for="base_options"> Base オプション </label> <input id="base_options" name="base_options">
