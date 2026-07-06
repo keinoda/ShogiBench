@@ -17,6 +17,11 @@
     "balance_engine_throughputs"  : false,
 
     "books" : [
+        "taya36_shogi_sfen.epd",
+        "yaneuraou2025_ply24_shogi_sfen.epd",
+        "yaneuraou2025_ply32_shogi_sfen.epd",
+        "dlshogi_gokaku_sfen.epd",
+        "dlshogi_floodgate32to80_sfen.epd",
         "4moves_v1_shogi_sfen.epd",
         "6moves_v1_shogi_sfen.epd"
     ],

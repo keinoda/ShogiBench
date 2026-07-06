@@ -327,7 +327,42 @@ nohup curl -sS -X POST https://<あなたのサーバー>/scripts/ \
 - Fly.io のディスク容量に注意: ネットは `/data` のボリュームに保存されます。
   足りなくなったら `fly volumes extend <volume-id> -s <GB>` で拡張できます
 
-## 8. shogitest フォーク(keinoda/shogitest)
+## 8. 互角局面集(開始局面ブック)
+
+よく使われる互角局面集を同梱しています。テスト作成フォームの Book 欄で
+選択でき、ワーカーは `Books/dist/` の zip をリポジトリから自動取得して
+sha256 を検証します。いずれも shogitest が読める「1行1局面のSFEN
+(盤面 手番 持駒 手数 の4フィールド)」に変換済みです。
+
+| ブック名 | 局面数 | 出典 |
+|---|---|---|
+| `taya36_shogi_sfen.epd` | 1,952 | たややん互角局面集(36手目)。水匠系/TanukiColiseum の事実上の標準。floodgate R3800+ の対局から評価値±100以内で抽出 |
+| `yaneuraou2025_ply24_shogi_sfen.epd` | 30,014 | やねうら王互角局面集2025(24手目)。水匠10・2億ノードで検証、\|評価値\|≤50。MITライセンス |
+| `yaneuraou2025_ply32_shogi_sfen.epd` | 26,209 | 同上(32手目) |
+| `dlshogi_gokaku_sfen.epd` | 5,233 | 山岡忠夫氏(dlshogi)の互角局面集(36手目)。floodgate R3800+ から抽出 |
+| `dlshogi_floodgate32to80_sfen.epd` | 8,071 | 同氏の中盤互角局面集(32〜80手目、評価値±150以内)。中盤力の測定向け |
+| `4moves/6moves_v1_shogi_sfen.epd` | - | 旧来の浅い局面集(互換用に残置) |
+
+- 「startpos moves ...」形式の原本は python-shogi で局面を再生して
+  SFEN化しています(重複局面=合流は原本どおり保持)
+- 原本より局面数がわずかに少ないのは、**手番側に王手がかかっている
+  局面を除外**しているため(shogitest は王手つき開始局面を扱えない)
+- 出典: たややん氏(@tayayan_ts)、やねうら王
+  (github.com/yaneurao/YaneuraOu Releases "BalancedPositions2025")、
+  山岡忠夫氏(tadaoyamaoka.hatenablog.com)。再配布にあたっては各氏の
+  公開条件に従います
+- 新しいブックを足すには: SFEN化した `.epd` を単体で zip し
+  `Books/dist/` に置き、`Books/<名前>.json` に sha256(zip内ファイルの
+  中身のsha)と source URL を書いて `config.json` の books に追加。
+  **ファイル名に "shogi" を含めること**(ワーカーが将棋対局と判定する条件)
+
+デフォルトプリセットのブックは `taya36_shogi_sfen.epd` です。
+参考: 一般的な測定条件は、水匠/tanuki-系が「持ち時間300秒+1手2秒加算・
+1スレッド・5000局」、やねうら王系が「1手1〜4秒の短時間・数千局」、
+dlshogi系が「持ち時間400秒+2秒加算」など。ShogiBench のプリセット
+(VSTC〜VLTC、SMP、固定ノード、秒読み風)はこれらを参考にしています。
+
+## 9. shogitest フォーク(keinoda/shogitest)
 
 対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.2)。
 本家からの主な変更:
