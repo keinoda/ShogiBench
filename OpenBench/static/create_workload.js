@@ -36,6 +36,31 @@ function create_network_options(field_id, engine) {
     }
 }
 
+function create_build_options(field_id, engine) {
+
+    var build_options = document.getElementById(field_id);
+
+    // TUNE pages only have a dev_build selector
+    if (build_options == null)
+        return;
+
+    // Delete all existing Variants
+    while (build_options.length)
+        build_options.remove(0);
+
+    // Add each Build Variant defined for the engine
+    const variants = (config.engines[engine].build || {}).variants || { 'default' : '' };
+    for (const name in variants) {
+
+        var opt      = document.createElement('option');
+        opt.text     = name;
+        opt.value    = name;
+        opt.selected = name === 'default';
+        opt.title    = variants[name];
+        build_options.add(opt);
+    }
+}
+
 function create_preset_buttons(engine, workload_type) {
 
     // Clear out all of the existing buttons
@@ -123,6 +148,7 @@ function set_engine(engine, target) {
     document.getElementById(target + '_repo'  ).value = repos[engine] || config.engines[engine].source
 
     create_network_options(target + '_network', engine);
+    create_build_options(target + '_build', engine);
 }
 
 function set_option(option_name, option_value) {

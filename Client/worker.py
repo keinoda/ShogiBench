@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 39 # Client version to send to the Server
+CLIENT_VERSION   = 40 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -501,6 +501,13 @@ class MatchRunner:
         if private and network and network != 'None':
             options += ' EvalFile=%s' % (os.path.join('../Networks', network))
             name    += '-%s' % (network)
+
+        # Public engines whose Makefile cannot embed a Network (no EVALFILE
+        # support, eg YaneuraOu) receive it as a runtime option instead, when
+        # the engine config sets build.network_option
+        net_option = config.workload['test'][branch]['build'].get('network_option')
+        if not private and net_option and network and network != 'None':
+            options += ' %s=%s' % (net_option, os.path.join('../Networks', network))
 
         # Set the SyzygyPath if we have them, and are allowed to use them
         if syzygy != 'DISABLED' and config.syzygy_max:
@@ -1230,8 +1237,9 @@ def safe_download_engine(config, branch, net_path):
     commit_sha  = config.workload['test'][branch]['sha']
     source      = config.workload['test'][branch]['source']
     private     = config.workload['test'][branch]['private']
+    build_args  = config.workload['test'][branch].get('build_args', '')
 
-    bin_name = utils.engine_binary_name(engine, commit_sha, net_path, private)
+    bin_name = utils.engine_binary_name(engine, commit_sha, net_path, private, build_args)
     out_path = os.path.join('Engines', bin_name)
 
     if private:
@@ -1246,12 +1254,13 @@ def safe_download_engine(config, branch, net_path):
 
     else:
 
-        make_path = config.workload['test'][branch]['build']['path']
-        compiler  = config.compilers[engine][0]
+        make_path  = config.workload['test'][branch]['build']['path']
+        alt_binary = config.workload['test'][branch]['build'].get('binary', '')
+        compiler   = config.compilers[engine][0]
 
         try:
             return utils.download_public_engine(
-                engine, net_path, branch_name, source, make_path, out_path, compiler)
+                engine, net_path, branch_name, source, make_path, out_path, compiler, build_args, alt_binary)
 
         except utils.OpenBenchBuildFailedException as error:
 

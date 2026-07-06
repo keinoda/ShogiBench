@@ -38,6 +38,16 @@ from OpenBench.models import *
 from OpenBench.config import OPENBENCH_CONFIG
 from OpenBench.workloads.verify_workload import verify_workload
 
+def resolve_build_variant(request, engine_field, variant_field):
+
+    # Returns (variant_name, make_arguments) for the requested engine.
+    # Variants were already validated by verify_workload.
+
+    engine  = request.POST[engine_field]
+    variant = request.POST.get(variant_field, 'default')
+    args    = OPENBENCH_CONFIG['engines'][engine]['build']['variants'].get(variant, '')
+    return variant, args
+
 def create_workload(request, workload_type):
 
     assert workload_type in [ 'TEST', 'TUNE', 'DATAGEN' ]
@@ -123,12 +133,16 @@ def create_new_test(request):
     test.dev_network       = request.POST['dev_network']
     test.dev_time_control  = OpenBench.utils.TimeControl.parse(request.POST['dev_time_control'])
 
+    test.dev_build_name, test.dev_build_args = resolve_build_variant(request, 'dev_engine', 'dev_build')
+
     test.base              = get_engine(*base_ingo)
     test.base_repo         = request.POST['base_repo']
     test.base_engine       = request.POST['base_engine']
     test.base_options      = request.POST['base_options']
     test.base_network      = request.POST['base_network']
     test.base_time_control = OpenBench.utils.TimeControl.parse(request.POST['base_time_control'])
+
+    test.base_build_name, test.base_build_args = resolve_build_variant(request, 'base_engine', 'base_build')
 
     test.workload_size     = int(request.POST['workload_size'])
     test.priority          = int(request.POST['priority'])
@@ -191,6 +205,9 @@ def create_new_tune(request):
     test.dev_network      = test.base_network      = request.POST['dev_network']
     test.dev_time_control = test.base_time_control = OpenBench.utils.TimeControl.parse(request.POST['dev_time_control'])
 
+    test.dev_build_name, test.dev_build_args = resolve_build_variant(request, 'dev_engine', 'dev_build')
+    test.base_build_name, test.base_build_args = test.dev_build_name, test.dev_build_args
+
     test.workload_size    = int(request.POST['spsa_pairs_per'])
     test.priority         = int(request.POST['priority'])
     test.throughput       = int(request.POST['throughput'])
@@ -242,12 +259,16 @@ def create_new_datagen(request):
     test.dev_network       = request.POST['dev_network']
     test.dev_time_control  = OpenBench.utils.TimeControl.parse(request.POST['dev_time_control'])
 
+    test.dev_build_name, test.dev_build_args = resolve_build_variant(request, 'dev_engine', 'dev_build')
+
     test.base              = get_engine(*base_ingo)
     test.base_repo         = request.POST['base_repo']
     test.base_engine       = request.POST['base_engine']
     test.base_options      = request.POST['base_options']
     test.base_network      = request.POST['base_network']
     test.base_time_control = OpenBench.utils.TimeControl.parse(request.POST['base_time_control'])
+
+    test.base_build_name, test.base_build_args = resolve_build_variant(request, 'base_engine', 'base_build')
 
     test.max_games         = int(request.POST['datagen_max_games'])
     test.genfens_args      = request.POST['datagen_custom_genfens']
