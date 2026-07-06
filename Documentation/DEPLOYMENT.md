@@ -239,3 +239,57 @@ python manage.py runserver
 ```sh
 python manage.py test OpenBench
 ```
+
+---
+
+## 6. ビルドバリアント(同一ブランチでビルド違いの対戦)
+
+ブランチを分けなくても、**make引数の違い**で別エンジンとして対戦させられます。
+
+- バリアントは `Engines/<エンジン>.json` の `build.variants` に「名前: make引数」で定義します
+- テスト作成フォームの **Dev ビルド / Base ビルド** ドロップダウンで選択します
+- ワーカーは `(コミットsha, ネットワーク, ビルド引数)` ごとに別バイナリとして
+  ビルド・キャッシュするので衝突しません
+- バリアントごとに bench 値が異なる場合は、フォームの Bench 欄に手入力してください
+
+例(YaneuraOu):
+
+```json
+"variants" : {
+    "NNUE"     : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE",
+    "KPPT"     : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_KPPT",
+    "MATERIAL" : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_MATERIAL"
+}
+```
+
+Network(評価関数)違いの対戦は従来どおり: `/networks/` にファイルを登録し、
+テスト作成時に Dev/Base で別のネットワークを選ぶだけです(ブランチは同一でOK)。
+
+### OpenBench非対応Makefileのエンジン(YaneuraOu等)向けフック
+
+- `build.binary`: Makefileが `EXE=` を無視して固定名のバイナリを出力する場合、
+  その名前を指定するとワーカーがリネームして扱います(例: `"YaneuraOu-by-gcc"`)
+- `build.network_option`: `EVALFILE=` での埋め込みに非対応のエンジンは、
+  ネットワークを実行時のUSIオプションとして渡します(例: `"EvalFile"`)
+
+### YaneuraOu を使う際の注意(keinoda/YaneuraOu フォーク側の要件)
+
+1. **bench コマンド**: ワーカーはビルド検証に `./エンジン bench` を実行し、
+   出力から `nodes <数値>` / `<数値> nodes` / `nodes searched <数値>` と
+   `nps <数値>`(または `<数値> nps`)のパターンを読み取ります。
+   この形式の行を bench 終了時に出力する必要があります
+2. **EvalFile オプション**: NNUE系エディションでネットワーク差し替え対戦を
+   する場合、単一ファイルのパスを受け取る `EvalFile` USIオプションが必要です
+   (EvalDir+固定ファイル名しかない場合はフォークに追加してください)
+3. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
+
+## 7. shogitest フォーク(keinoda/shogitest)
+
+対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.2)。
+本家からの主な変更:
+
+- **成績表示を先頭エンジン(=Dev)基準に修正**: 従来は「A vs B」と表示しつつ
+  Elo/勝敗がB基準で計算されており、直感と逆でした
+- ヘッダーに `(score for A)` と基準を明示
+- `tc=inf` を許容(固定ノード指定の互換性)
+- 警告・エラー出力の改行修正
