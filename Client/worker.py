@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 44 # Client version to send to the Server
+CLIENT_VERSION   = 45 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -1216,7 +1216,7 @@ def safe_download_network_weights(config, branch):
     engine   = config.workload['test'][branch]['engine' ]
     net_name = config.workload['test'][branch]['netname']
     net_sha  = config.workload['test'][branch]['network']
-    aux_sha  = config.workload['test'][branch].get('network_aux', '')
+    aux_list = config.workload['test'][branch].get('network_aux_files', [])
     net_path = os.path.join('Networks', net_sha)
 
     # Not all engines use Network files
@@ -1226,12 +1226,13 @@ def safe_download_network_weights(config, branch):
     credentials = (config.server, config.username, config.password)
     utils.download_network(*credentials, engine, net_name, net_sha, net_path)
 
-    # Auxiliary file (eg progress.bin), addressed via the main Network
-    if aux_sha:
-        aux_path = os.path.join('Networks', aux_sha)
-        endpoint = 'api/networks/%s/%s/aux' % (engine, net_sha)
+    # Auxiliary files (eg progress.bin, usi_options.txt), addressed via
+    # the main Network and fetched by their original filename
+    for aux in aux_list:
+        aux_path = os.path.join('Networks', aux['sha'])
+        endpoint = 'api/networks/%s/%s/aux/%s' % (engine, net_sha, aux['name'])
         utils.download_network(
-            *credentials, engine, '%s (aux)' % (net_name), aux_sha, aux_path, endpoint)
+            *credentials, engine, '%s (%s)' % (net_name, aux['name']), aux['sha'], aux_path, endpoint)
 
     return net_path
 
@@ -1334,18 +1335,46 @@ def stage_network_options(config, branch, prefix=''):
 
     pairs = [(net_option, os.path.join(prefix, dir_path))]
 
-    # Auxiliary file (eg progress.bin) goes next to the Network, and its
-    # path option points into the same directory
-    aux_sha    = test.get('network_aux', '')
-    aux_option = build_conf.get('network_aux_option')
-    aux_fname  = build_conf.get('network_aux_filename')
-    if aux_sha and aux_fname:
-        staged_aux = os.path.join(dir_path, aux_fname)
+    # Every auxiliary file goes next to the Network under its original
+    # name. Files with an entry in build.network_aux_options additionally
+    # get their path passed as that USI option (eg progress.bin ->
+    # ProgressFilePath). A file named usi_options.txt is special: each
+    # "Name=Value" line becomes a setoption, so per-eval mandatory
+    # settings travel with the Network and can never be forgotten
+    aux_options = build_conf.get('network_aux_options', {})
+
+    for aux in test.get('network_aux_files', []):
+
+        staged_aux = os.path.join(dir_path, aux['name'])
         if not os.path.exists(staged_aux):
-            try: os.link(os.path.join('Networks', aux_sha), staged_aux)
-            except OSError: shutil.copyfile(os.path.join('Networks', aux_sha), staged_aux)
-        if aux_option:
-            pairs.append((aux_option, os.path.join(prefix, staged_aux)))
+            try: os.link(os.path.join('Networks', aux['sha']), staged_aux)
+            except OSError: shutil.copyfile(os.path.join('Networks', aux['sha']), staged_aux)
+
+        if aux['name'] in aux_options:
+            pairs.append((aux_options[aux['name']], os.path.join(prefix, staged_aux)))
+
+        if aux['name'].lower() == 'usi_options.txt':
+            pairs += parse_usi_options_file(staged_aux)
+
+    return pairs
+
+def parse_usi_options_file(path):
+
+    ## "Name=Value" lines from a Network's usi_options.txt, applied to the
+    ## engine at both bench and game time. '#' starts a comment. Values
+    ## must not contain spaces: the match runner splits on whitespace.
+
+    pairs = []
+    with open(path, encoding='utf-8-sig') as fin:
+        for line in fin:
+            line = line.split('#')[0].strip()
+            if not line:
+                continue
+            if '=' not in line or ' ' in line:
+                print ('Ignoring malformed usi_options.txt line: %s' % (line))
+                continue
+            name, value = line.split('=', 1)
+            pairs.append((name, value))
 
     return pairs
 

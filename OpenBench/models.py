@@ -274,12 +274,25 @@ class Network(Model):
     author      = CharField(max_length=64)
     created     = DateTimeField(auto_now_add=True)
 
-    # Optional auxiliary file (eg YaneuraOu's progress.bin), stored in
-    # /Media/ under its own hash and staged next to the network on workers
-    aux_sha256  = CharField(max_length=8, blank=True, default='')
-
     def __str__(self):
         return '[{}] {} ({})'.format(self.engine, self.name, self.sha256)
+
+class NetworkAuxFile(Model):
+
+    # Auxiliary files travel with a Network (eg YaneuraOu's progress.bin,
+    # or a usi_options.txt with per-eval mandatory settings). Stored in
+    # /Media/ under their own hash; workers stage every one of them into
+    # the same directory as the network file, under its original name
+    network = ForeignKey(Network, on_delete=CASCADE, related_name='aux_files')
+    name    = CharField(max_length=64)
+    sha256  = CharField(max_length=8)
+
+    class Meta:
+        unique_together = ('network', 'name')
+
+    def __str__(self):
+        return '[{}] {} aux {} ({})'.format(
+            self.network.engine, self.network.name, self.name, self.sha256)
 
 class PGN(Model):
 

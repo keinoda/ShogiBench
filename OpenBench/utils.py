@@ -322,25 +322,39 @@ def network_upload(request, engine, name):
     if engine not in OPENBENCH_CONFIG['engines'].keys():
         return OpenBench.views.redirect(request, '/networks/', error='No Engine found with matching name')
 
-    # Optional auxiliary file (eg progress.bin), hashed the same way
-    aux_sha = ''
-    if (auxfile := request.FILES.get('auxfile')):
+    # Optional auxiliary files (eg progress.bin, usi_options.txt), any
+    # number of them, hashed the same way. Workers stage every one of
+    # these into the same directory as the network, under this filename
+    aux_files = []
+    for auxfile in request.FILES.getlist('auxfiles') + request.FILES.getlist('auxfile'):
+
+        aux_name = os.path.basename(auxfile.name)[:64]
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', aux_name):
+            return OpenBench.views.redirect(request, '/networks/', error='Aux filenames may only use [a-zA-Z0-9_.-]')
+
+        if aux_name in [existing for existing, _, _ in aux_files]:
+            return OpenBench.views.redirect(request, '/networks/', error='Duplicate aux filename %s' % (aux_name))
+
         aux = hashlib.sha256()
         for chunk in auxfile.chunks():
             aux.update(chunk)
-        aux_sha = aux.hexdigest()[:8].upper()
+        aux_files.append((aux_name, aux.hexdigest()[:8].upper(), auxfile))
 
     # Save the files locally into /Media/ if we don't already have them
     if not Network.objects.filter(sha256=sha256):
         FileSystemStorage().save('%s' % (sha256), netfile)
 
-    if aux_sha and not os.path.exists(os.path.join(MEDIA_ROOT, aux_sha)):
-        FileSystemStorage().save('%s' % (aux_sha), auxfile)
+    for aux_name, aux_sha, auxfile in aux_files:
+        if not os.path.exists(os.path.join(MEDIA_ROOT, aux_sha)):
+            FileSystemStorage().save('%s' % (aux_sha), auxfile)
 
     # Create the Network object mapping to the saved local file
-    Network.objects.create(
-        sha256=sha256, name=name, aux_sha256=aux_sha,
+    network = Network.objects.create(
+        sha256=sha256, name=name,
         engine=engine, author=request.user.username)
+
+    for aux_name, aux_sha, auxfile in aux_files:
+        NetworkAuxFile.objects.create(network=network, name=aux_name, sha256=aux_sha)
 
     # Redirect to Engine specific view, to add clarity
     return OpenBench.views.redirect(request, '/networks/%s/' % (engine), status='Uploaded %s for %s' % (name, engine))
@@ -377,16 +391,16 @@ def network_download(request, engine, network):
     response['Content-Disposition'] = 'attachment; filename=' + network.sha256
     return response
 
-def network_download_aux(request, engine, network):
+def network_download_aux(request, engine, aux):
 
-    # Same as network_download, but for the auxiliary file (eg progress.bin)
-    netfile  = os.path.join(MEDIA_ROOT, network.aux_sha256)
+    # Same as network_download, but for an auxiliary file (eg progress.bin)
+    netfile  = os.path.join(MEDIA_ROOT, aux.sha256)
     fwrapper = FileWrapper(open(netfile, 'rb'), 8192)
     response = FileResponse(fwrapper, content_type='application/octet-stream')
 
     response['Expires'] = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).ctime()
     response['Content-Length'] = os.path.getsize(netfile)
-    response['Content-Disposition'] = 'attachment; filename=' + network.aux_sha256
+    response['Content-Disposition'] = 'attachment; filename=' + aux.sha256
     return response
 
 def network_edit(request, engine, network):

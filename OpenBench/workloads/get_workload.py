@@ -33,13 +33,16 @@ import OpenBench.utils
 from OpenBench.config import OPENBENCH_CONFIG
 from OpenBench.models import Network, Result, Test
 
-def network_aux_sha(engine, sha):
+def network_aux_files(engine, sha):
 
-    # The sha256(8) of a Network's auxiliary file (eg progress.bin), or ''
+    # Every auxiliary file travelling with a Network (eg progress.bin,
+    # usi_options.txt), as [{name, sha}] for the worker to stage
     if not sha or sha == 'None':
-        return ''
+        return []
     network = Network.objects.filter(engine=engine, sha256=sha).first()
-    return network.aux_sha256 if network else ''
+    if not network:
+        return []
+    return [{ 'name' : aux.name, 'sha' : aux.sha256 } for aux in network.aux_files.all()]
 
 from django.db import transaction
 
@@ -237,7 +240,7 @@ def workload_to_dictionary(test, result, machine):
         'engine'       : test.dev_engine,
         'options'      : test.dev_options,
         'network'      : test.dev_network,
-        'network_aux'  : network_aux_sha(test.dev_engine, test.dev_network),
+        'network_aux_files' : network_aux_files(test.dev_engine, test.dev_network),
         'netname'      : test.dev_netname,
         'time_control' : test.dev_time_control,
         'build'        : OPENBENCH_CONFIG['engines'][test.dev_engine]['build'],
@@ -255,7 +258,7 @@ def workload_to_dictionary(test, result, machine):
         'engine'       : test.base_engine,
         'options'      : test.base_options,
         'network'      : test.base_network,
-        'network_aux'  : network_aux_sha(test.base_engine, test.base_network),
+        'network_aux_files' : network_aux_files(test.base_engine, test.base_network),
         'netname'      : test.base_netname,
         'time_control' : test.base_time_control,
         'build'        : OPENBENCH_CONFIG['engines'][test.base_engine]['build'],
