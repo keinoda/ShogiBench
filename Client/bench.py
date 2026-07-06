@@ -69,7 +69,22 @@ def parse_stream_output(stream):
     bench = int(re.search(r'\d+', bench).group()) if bench else None
     return (bench, nps)
 
-def single_core_bench(binary, network, private, bench_args, usi_options, outqueue):
+def find_fatal_warning(stdout, fatal_patterns):
+
+    # Some engines only warn on a broken configuration (eg YaneuraOu's
+    # "NNUE hash mismatch" for a wrong-architecture eval file) and then
+    # play garbage. Surface such lines as bench failures instead.
+    if not fatal_patterns:
+        return None
+
+    for line in stdout.decode('utf-8', 'replace').split('\n'):
+        for pattern in fatal_patterns:
+            if pattern.lower() in line.lower():
+                return line.strip()
+
+    return None
+
+def single_core_bench(binary, network, private, bench_args, usi_options, fatal_patterns, outqueue):
 
     # Engines may need extra bench arguments to run a deterministic bench,
     # eg YaneuraOu's "bench 16 1 100000 default nodes" (its default bench
@@ -87,7 +102,11 @@ def single_core_bench(binary, network, private, bench_args, usi_options, outqueu
                 ['./%s' % (binary)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
             ).communicate(input=('\n'.join(lines) + '\n').encode('utf-8'))
-            outqueue.put(parse_stream_output(stdout))
+
+            if (warning := find_fatal_warning(stdout, fatal_patterns)):
+                outqueue.put(('fatal', warning))
+            else:
+                outqueue.put(parse_stream_output(stdout))
 
         except:
             outqueue.put((None, None))
@@ -106,18 +125,22 @@ def single_core_bench(binary, network, private, bench_args, usi_options, outqueu
         stdout, stderr = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         ).communicate()
-        outqueue.put(parse_stream_output(stdout))
+
+        if (warning := find_fatal_warning(stdout, fatal_patterns)):
+            outqueue.put(('fatal', warning))
+        else:
+            outqueue.put(parse_stream_output(stdout))
 
     except: # Signal an error with (None, None)
         outqueue.put((None, None))
 
-def multi_core_bench(binary, network, private, threads, bench_args='', usi_options=None):
+def multi_core_bench(binary, network, private, threads, bench_args='', usi_options=None, fatal_patterns=None):
 
     outqueue = multiprocessing.Queue()
 
     processes = [
         multiprocessing.Process(
-            target=single_core_bench, args=(binary, network, private, bench_args, usi_options, outqueue))
+            target=single_core_bench, args=(binary, network, private, bench_args, usi_options, fatal_patterns, outqueue))
         for ii in range(threads)
     ]
 
@@ -135,13 +158,17 @@ def multi_core_bench(binary, network, private, threads, bench_args='', usi_optio
         for process in processes:
             process.join()
 
-def run_benchmark(binary, network, private, threads, sets, expected=None, bench_args='', usi_options=None):
+def run_benchmark(binary, network, private, threads, sets, expected=None, bench_args='', usi_options=None, fatal_patterns=None):
 
     engine = os.path.basename(binary)
 
     benches, speeds = [], []
     for ii in range(sets):
-        for bench, speed in multi_core_bench(binary, network, private, threads, bench_args, usi_options):
+        for bench, speed in multi_core_bench(binary, network, private, threads, bench_args, usi_options, fatal_patterns):
+
+            if bench == 'fatal':
+                raise utils.OpenBenchBadBenchException('[%s] %s' % (engine, speed))
+
             benches.append(bench); speeds.append(speed)
 
     if len(set(benches)) != 1:
