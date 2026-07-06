@@ -1,0 +1,216 @@
+# ShogiBench デプロイガイド
+
+ShogiBench は「コーディネーションサーバー」(この Django アプリ)と「ワーカー」
+(対局を実際に実行するマシン)の2層構成です。
+
+```
+[ブラウザ]  ──閲覧(公開)/テスト作成(ログイン)──▶  [コーディネーションサーバー]
+                                                    Fly.io / Render / VPS など安価な常設サーバー
+                                                    UI + API + SQLite + SPRT/SPSA 集計
+                                                          ▲
+                                                          │ HTTPS (ワーカーキーで認証)
+                                                          │ ワークロード取得・結果送信
+                                                    [ワーカー]
+                                                    vast.ai などの高性能インスタンス
+                                                    エンジンをビルドして対局を実行
+```
+
+- **閲覧は公開**: テスト結果・進行状況は誰でも見られます
+- **実行はログイン必須**: テスト作成・SPSA・ネットワーク管理はログインが必要です
+- **登録は招待制**: Web からの新規登録は無効化されており、管理者が
+  `manage.py invite` でアカウントを発行します
+- **ワーカーは専用キーで接続**: アカウントのパスワードを vast.ai インスタンスに
+  置く必要はありません。`/workers/` で発行したトークンを使います
+
+---
+
+## 1. サーバーのデプロイ
+
+### 共通の環境変数
+
+| 変数 | 必須 | 説明 |
+|---|---|---|
+| `OPENBENCH_SECRET_KEY` | ✅ | Django の秘密鍵。設定すると自動的に `DEBUG=False` になる |
+| `OPENBENCH_DATA_DIR` | 推奨 | SQLite と Media の置き場所。永続ボリュームを指すこと (例 `/data`) |
+| `OPENBENCH_ALLOWED_HOSTS` | 推奨 | 公開ホスト名 (カンマ区切り)。例 `shogibench.fly.dev` |
+| `OPENBENCH_CSRF_TRUSTED_ORIGINS` | 推奨 | `https://` 付きの公開オリジン。ログインフォームの CSRF に必要 |
+| `OPENBENCH_DEBUG` | 任意 | 明示的に上書きしたい場合のみ (`1`/`0`) |
+| `WEB_CONCURRENCY` | 任意 | gunicorn ワーカー数 (既定 2) |
+
+秘密鍵の生成例:
+
+```sh
+python3 -c 'import secrets; print(secrets.token_urlsafe(50))'
+```
+
+> **注意**: DB は SQLite なので、サーバーは常に **1 インスタンス** で運用して
+> ください(水平スケール不可)。この用途では十分な性能があります。
+
+### 1-a. Fly.io (推奨)
+
+リポジトリ直下の `fly.toml` を使います。
+
+```sh
+fly launch --no-deploy      # アプリ名を決める (fly.toml の app / ホスト名も合わせて変更)
+fly volumes create shogibench_data --size 3
+fly secrets set OPENBENCH_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')
+fly deploy
+fly scale count 1           # SQLite のため必ず 1 台
+```
+
+初期ユーザーの発行:
+
+```sh
+fly ssh console -C 'python /app/manage.py invite <ユーザー名> --approver'
+```
+
+`fly.toml` は idle 時にマシンを停止する設定 (`min_machines_running = 0`) に
+なっています。ワーカーが動いている間はポーリングで起き続けます。UI の
+コールドスタートが気になる場合は `1` にしてください(常時起動でも月数ドル程度)。
+
+### 1-b. Render
+
+`render.yaml` (Blueprint) を使います。ダッシュボードから "New +" → "Blueprint"
+でこのリポジトリを指定してください。
+
+- 永続ディスクが必要なため **Starter プラン以上** が必要です
+  (Free プランはファイルシステムが揮発性で、再起動のたびに DB が消えます)
+- デプロイ後、Render の Shell タブで `python manage.py invite <ユーザー名> --approver`
+
+### 1-c. VPS / 自宅サーバー (Docker Compose)
+
+```sh
+export OPENBENCH_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')
+export OPENBENCH_ALLOWED_HOSTS=bench.example.com
+export OPENBENCH_CSRF_TRUSTED_ORIGINS=https://bench.example.com
+docker compose up -d --build
+docker compose exec web python manage.py invite <ユーザー名> --approver
+```
+
+HTTPS 終端は Caddy や nginx などのリバースプロキシを前段に置いてください
+(`X-Forwarded-Proto` を付与すること)。
+
+---
+
+## 2. ユーザー管理(招待制)
+
+Web からの新規登録は `Config/config.json` の
+`"require_manual_registration": true` により無効化されています。
+
+アカウント発行はサーバー上で:
+
+```sh
+python manage.py invite <ユーザー名> [--email <メール>] [--password <初期パスワード>] [--approver]
+```
+
+- パスワード省略時はランダム生成され、一度だけ表示されます
+- `--approver` を付けるとテストの承認・ネットワーク管理が可能になります
+- ユーザーは初回ログイン後に `/profile/` でパスワードを変更できます
+- 無効化したい場合は Django admin (`/admin/`) で Profile の `enabled` を外します
+  (admin へは `python manage.py createsuperuser` で作った管理者で入れます)
+
+---
+
+## 3. ワーカー (vast.ai) の接続
+
+### 3-1. ワーカーキーの発行
+
+1. サーバーにログインし、サイドバーの **Worker Keys** (`/workers/`) を開く
+2. キー名 (例 `vastai-epyc`) を付けて **Create Worker Key**
+3. 表示されたトークンをコピー(ページに接続用スニペットも表示されます)
+
+トークンは「アカウントのパスワードの代わり」に使う接続専用の鍵です:
+
+- Web サイトへのログインには使えません(ワーカー用 API 専用)
+- 漏洩したら `/workers/` で Delete / Disable するだけで無効化できます
+- インスタンスごと・テンプレートごとにキーを分けると管理が楽です
+
+### 3-2. vast.ai テンプレートの設定
+
+普段使っているテンプレートに次を追加します。
+
+**Environment Variables:**
+
+```
+OPENBENCH_SERVER=https://<あなたのサーバー>/
+OPENBENCH_USERNAME=<ユーザー名>
+OPENBENCH_PASSWORD=<ワーカーキーのトークン>
+```
+
+**On-start Script:**
+
+```sh
+curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/worker/setup_worker.sh -o /root/setup_worker.sh
+chmod +x /root/setup_worker.sh
+nohup /root/setup_worker.sh > /root/shogibench-worker.log 2>&1 &
+```
+
+(`Deploy/worker/onstart.sh` と同じ内容です。ブランチ構成を変えた場合は URL の
+`shogi` 部分を合わせてください)
+
+イメージは Ubuntu 系なら何でも動きます (`ubuntu:24.04`、vast.ai の標準イメージ等)。
+必要なパッケージ (git / clang / make / python3) はスクリプトが自動で入れます。
+毎回の apt install を省きたい場合は `Deploy/worker/Dockerfile` をビルドして
+Docker Hub に push し、それをテンプレートのイメージに指定してください。
+
+### 3-3. 起動済みインスタンスに手動で追加する場合
+
+SSH して以下を実行するだけです (`/workers/` ページのスニペットをコピペでも可):
+
+```sh
+export OPENBENCH_SERVER=https://<あなたのサーバー>/
+export OPENBENCH_USERNAME=<ユーザー名>
+export OPENBENCH_PASSWORD=<ワーカーキーのトークン>
+curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/worker/setup_worker.sh | bash
+```
+
+チューニング用の環境変数:
+
+| 変数 | 既定値 | 説明 |
+|---|---|---|
+| `SHOGIBENCH_THREADS` | 全コア | ワーカーが使うスレッド数 |
+| `SHOGIBENCH_SOCKETS` | 1 | CPU ソケット数 |
+| `SHOGIBENCH_REPO_URL` | このリポジトリ | クライアント取得元 |
+| `SHOGIBENCH_REPO_REF` | `shogi` | 取得するブランチ |
+
+### 3-4. 動作確認
+
+- サーバーの `/machines/` に数十秒以内にマシンが現れます
+- `/workers/` の Last Used が更新されます
+- テストを作成 (`/test/new/`) すると、対応エンジンをビルドして対局が始まります
+
+インスタンスを破棄すればワーカーは消えます。サーバー側の後始末は不要です
+(マシン一覧は最近アクティブなものだけが表示されます)。
+
+---
+
+## 4. セキュリティ上の注意
+
+- ページ自体は公開ですが、書き込み系 (テスト作成・承認・ネット管理・ワーカー
+  API) はすべて認証必須です
+- vast.ai インスタンスは第三者のハードウェアです。**アカウントパスワードや
+  GitHub トークンを置かず、ワーカーキーだけを渡してください**
+- プライベートエンジンを扱う場合 (engine config の `private: true`) は
+  ワーカーに GitHub PAT が必要になるため、レンタルインスタンスでの利用は
+  推奨しません
+- `OPENBENCH_SECRET_KEY` を変更するとログインセッションが無効になります
+  (データは消えません)
+
+---
+
+## 5. ローカル開発
+
+環境変数なしで従来どおり動きます (`DEBUG=True`、DB はリポジトリ直下):
+
+```sh
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py invite dev --approver
+python manage.py runserver
+```
+
+テスト実行:
+
+```sh
+python manage.py test OpenBench
+```

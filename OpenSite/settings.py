@@ -15,14 +15,42 @@ import os
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/2.0/howto/deployment/checklist/
-# SECURITY WARNING: keep the secret key used in production secret!
-# SECURITY WARNING: don't run with debug turned on in production!
-SECRET_KEY = '@!zw2l8til1(0eb_nk+1w!(n78gqm&u)s)_v7#k6iseia@g9q0'
-DEBUG = True
+def env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ('1', 'true', 'yes', 'on')
 
-ALLOWED_HOSTS = ['*']
+def env_list(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return [x.strip() for x in value.split(',') if x.strip()]
+
+# Production deployments must provide OPENBENCH_SECRET_KEY. The hardcoded
+# key below is only ever used for local development, where DEBUG defaults
+# to True. Setting OPENBENCH_SECRET_KEY flips DEBUG off unless overridden.
+SECRET_KEY = os.environ.get(
+    'OPENBENCH_SECRET_KEY',
+    '@!zw2l8til1(0eb_nk+1w!(n78gqm&u)s)_v7#k6iseia@g9q0')
+
+DEBUG = env_bool('OPENBENCH_DEBUG', 'OPENBENCH_SECRET_KEY' not in os.environ)
+
+ALLOWED_HOSTS = env_list('OPENBENCH_ALLOWED_HOSTS', ['*'])
+
+# Required when serving over HTTPS behind a proxy (Fly.io, Render, etc).
+# Example: OPENBENCH_CSRF_TRUSTED_ORIGINS=https://shogibench.fly.dev
+CSRF_TRUSTED_ORIGINS = env_list('OPENBENCH_CSRF_TRUSTED_ORIGINS', [])
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE   = True
+    CSRF_COOKIE_SECURE      = True
+
+# Writable directory for the SQLite database and /Media/ uploads. Point
+# this at a persistent volume when deploying to a PaaS with ephemeral disks.
+DATA_DIR = os.environ.get('OPENBENCH_DATA_DIR', BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 HTML_MINIFY   = True
 APPEND_SLASH  = True
@@ -37,7 +65,7 @@ PROJECT_PATH  = os.path.abspath(PROJECT_PATH)
 TEMPLATE_PATH = os.path.join(PROJECT_PATH, 'Templates')
 
 MEDIA_URL  = '/Media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'Media')
+MEDIA_ROOT = os.path.join(DATA_DIR, 'Media')
 
 INSTALLED_APPS = [
     'OpenBench',
@@ -52,6 +80,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -90,7 +119,7 @@ WSGI_APPLICATION = 'OpenSite.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+        'NAME': os.path.join(DATA_DIR, 'db.sqlite3'),
     }
 }
 
@@ -131,4 +160,14 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/2.0/howto/static-files/
 
-STATIC_URL = '/static/'
+STATIC_URL  = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage',
+    },
+}

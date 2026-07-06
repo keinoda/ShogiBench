@@ -1,3 +1,32 @@
+# ShogiBench
+
+ShogiBench is a Shogi (USI) engine testing framework based on
+[OpenBench](https://github.com/AndyGrant/OpenBench), split into a cheap
+always-on coordination server and on-demand high-performance workers:
+
+- **Coordination server** — this Django app. Hosts the public UI (viewing
+  tests is open to everyone), the API, the SQLite database, and the SPRT/SPSA
+  bookkeeping. Designed to run on an inexpensive PaaS (Fly.io, Render) or any
+  small VPS. See [`Documentation/DEPLOYMENT.md`](Documentation/DEPLOYMENT.md).
+- **Workers** — rented vast.ai (or any Linux) instances that build the engines
+  and play the games. They connect to the server with a dedicated **Worker
+  Key** issued on the `/workers/` page, so your account password never lands
+  on a rented machine. Bootstrap scripts live in [`Deploy/worker/`](Deploy/worker/).
+- **Invite-only accounts** — public sign-up is disabled. Administrators create
+  accounts with `python manage.py invite <username> [--approver]`. Creating
+  tests, tuning, and managing networks all require a login.
+
+Quick start for a worker (or copy the snippet from `/workers/`):
+
+```sh
+export OPENBENCH_SERVER=https://<your-server>/
+export OPENBENCH_USERNAME=<username>
+export OPENBENCH_PASSWORD=<worker key token>
+curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/worker/setup_worker.sh | bash
+```
+
+---
+
 # OpenBench
 
 OpenBench is an open-source Chess Engine Testing Framework for UCI engines. OpenBench provides a lightweight interface and client to facilitate running fixed-game tests as well as SPRT tests to benchmark changes to engines for performance and stability. OpenBench supports [Fischer Random Chess](https://en.wikipedia.org/wiki/Chess960).

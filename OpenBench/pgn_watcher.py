@@ -26,6 +26,7 @@ import time
 import traceback
 
 from OpenBench.models import PGN
+from OpenSite.settings import MEDIA_ROOT
 
 from django.db import transaction, OperationalError
 from django.core.files.base import ContentFile
@@ -39,7 +40,7 @@ class PGNWatcher(threading.Thread):
 
     def process_pgn(self, pgn):
 
-        tar_path = FileSystemStorage('Media/PGNs').path('%d.pgn.tar' % (pgn.test_id))
+        tar_path = FileSystemStorage(os.path.join(MEDIA_ROOT, 'PGNs')).path('%d.pgn.tar' % (pgn.test_id))
         pgn_path = FileSystemStorage().path(pgn.filename())
 
         with transaction.atomic():

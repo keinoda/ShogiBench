@@ -1,6 +1,6 @@
 {
     "client_version"     : 39,
-    "client_repo_url"    : "https://github.com/87flowers/OpenBench",
+    "client_repo_url"    : "https://github.com/keinoda/ShogiBench",
     "client_repo_ref"    : "shogi",
 
     "fastchess_min_version" : "0.9.0",
@@ -13,7 +13,7 @@
 
     "use_cross_approval"          : false,
     "require_login_to_view"       : false,
-    "require_manual_registration" : false,
+    "require_manual_registration" : true,
     "balance_engine_throughputs"  : false,
 
     "books" : [
