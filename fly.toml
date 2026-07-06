@@ -1,15 +1,7 @@
-# Fly.io configuration for the ShogiBench coordination server.
+# fly.toml app configuration file generated for shogibench on 2026-07-06T03:49:28Z
 #
-# First deploy:
-#   fly launch --no-deploy            # or edit the app name below
-#   fly volumes create shogibench_data --size 3
-#   fly secrets set OPENBENCH_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')
-#   fly deploy
-#   fly scale count 1                 # SQLite requires exactly one machine
-#   fly ssh console -C 'python /app/manage.py invite <username> --approver'
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# Update OPENBENCH_ALLOWED_HOSTS / OPENBENCH_CSRF_TRUSTED_ORIGINS if you
-# rename the app or attach a custom domain.
 
 app = 'shogibench'
 primary_region = 'nrt'
@@ -18,20 +10,18 @@ primary_region = 'nrt'
   dockerfile = 'Deploy/server/Dockerfile'
 
 [env]
-  OPENBENCH_DATA_DIR = '/data'
   OPENBENCH_ALLOWED_HOSTS = 'shogibench.fly.dev'
   OPENBENCH_CSRF_TRUSTED_ORIGINS = 'https://shogibench.fly.dev'
+  OPENBENCH_DATA_DIR = '/data'
   WEB_CONCURRENCY = '2'
 
-[mounts]
+[[mounts]]
   source = 'shogibench_data'
   destination = '/data'
 
 [http_service]
-  internal_port = 8000
+  internal_port = 8080
   force_https = true
-  # Workers polling the server will keep it awake while tests run. Set
-  # min_machines_running = 1 if you prefer the UI to never cold-start.
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
