@@ -35,7 +35,7 @@ fi
 
 # Stop any worker started by an earlier run of this script, so re-running
 # it (e.g. from the /workers/ page) never leaves two loops behind
-for pid in $(pgrep -f '[s]hogibench_setup.sh' 2>/dev/null || true); do
+for pid in $(pgrep -f '[s]hogibench_setup.sh|[s]etup_worker.sh' 2>/dev/null || true); do
     [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] && kill "$pid" 2>/dev/null || true
 done
 pkill -f '[c]lient.py' 2>/dev/null || true
