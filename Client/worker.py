@@ -950,6 +950,10 @@ def server_configure_match_runner(config, name, build_func):
     payload = { 'username' : config.username, 'password' : config.password }
     data    = requests.post(target, data=payload, timeout=TIMEOUT_HTTP).json()
 
+    # The 'error' header is included if there was an issue (eg Bad Credentials)
+    if 'error' in data:
+        raise Exception('Server error: %s' % data['error'])
+
     # Might already have a sufficiently new Fastchess binary
     print ('> Checking for existing %s-ob binary' % name)
     runner_path = os.path.join(os.getcwd(), '%s-ob' % name)
