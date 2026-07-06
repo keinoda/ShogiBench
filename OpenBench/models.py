@@ -274,6 +274,10 @@ class Network(Model):
     author      = CharField(max_length=64)
     created     = DateTimeField(auto_now_add=True)
 
+    # Optional auxiliary file (eg YaneuraOu's progress.bin), stored in
+    # /Media/ under its own hash and staged next to the network on workers
+    aux_sha256  = CharField(max_length=8, blank=True, default='')
+
     def __str__(self):
         return '[{}] {} ({})'.format(self.engine, self.name, self.sha256)
 

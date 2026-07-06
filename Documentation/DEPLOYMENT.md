@@ -297,7 +297,12 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
    `nn.bin` 方式のため、ワーカーが `Networks/<sha>-dir/nn.bin` を自動で
    用意して `EvalDir` オプションで渡します(`build.network_option` +
    `build.network_filename` で設定済み)
-4. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
+4. **progress.bin(補助ファイル)**: ネット登録時に「補助ファイル(任意)」欄で
+   一緒にアップロードすると、ワーカーが nn.bin と同じディレクトリに
+   `progress.bin` として配置し、`ProgressFilePath` オプションでその位置を
+   渡します。補助ファイルなしの場合はオプションを渡さず、ビルド時に
+   埋め込まれた既定(`<internal>`)が使われます
+5. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
 
 ## 7. ネットワーク(評価関数)のアップロード
 

@@ -355,7 +355,7 @@ def normalize_build_command(text):
             expect_jobs = token == '-j'
             continue
 
-        if re.match(r'^(EXE|EVALFILE|CXX|CC)=', token, re.IGNORECASE):
+        if re.match(r'^(EXE|EVALFILE|CXX|CC|TARGET|TARGETDIR)=', token, re.IGNORECASE):
             dropped.append(token)
             continue
 
@@ -1265,6 +1265,20 @@ def api_network_download(request, engine, identifier):
         return OpenBench.utils.network_download(request, engine, network)
 
     return api_response({ 'error' : 'Engine not found. Check /api/config/ for a full list' })
+
+@csrf_exempt
+def api_network_download_aux(request, engine, identifier):
+
+    if not api_authenticate(request, require_enabled=True):
+        return api_response({ 'error' : 'API requires authentication for this endpoint' })
+
+    if not (network := OpenBench.utils.network_disambiguate(engine, identifier)):
+        return api_response({ 'error' : 'Network %s for Engine %s not found' % (identifier, engine) })
+
+    if not network.aux_sha256:
+        return api_response({ 'error' : 'Network %s has no auxiliary file' % (identifier) })
+
+    return OpenBench.utils.network_download_aux(request, engine, network)
 
 @csrf_exempt
 def api_network_delete(request, engine, identifier):
