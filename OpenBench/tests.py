@@ -68,6 +68,14 @@ class WorkerKeyAuthTests(TestCase):
         response = self.client.post('/clientVersionRef/', self.creds())
         self.assertIn('error', response.json())
 
+    def test_username_match_is_case_insensitive(self):
+        response = self.client.post('/clientVersionRef/', self.creds(username='Alice'))
+        self.assertIn('client_version', response.json())
+
+    def test_token_whitespace_is_forgiven(self):
+        response = self.client.post('/clientVersionRef/', self.creds(password=self.key.token + '\n'))
+        self.assertIn('client_version', response.json())
+
     def test_key_use_updates_last_used(self):
         self.assertIsNone(self.key.last_used)
         self.client.post('/clientVersionRef/', self.creds())
