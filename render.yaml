@@ -1,0 +1,32 @@
+# Render Blueprint for the ShogiBench coordination server.
+#
+# Note: persistent disks require a paid instance type (Starter or above);
+# the free tier has an ephemeral filesystem and would lose the SQLite
+# database on every restart. Disks also pin the service to a single
+# instance, which is exactly what SQLite needs.
+#
+# After the first deploy, create your account from the Render shell:
+#   python manage.py invite <username> --approver
+
+services:
+  - type: web
+    name: shogibench
+    runtime: docker
+    dockerfilePath: ./Deploy/server/Dockerfile
+    plan: starter
+    healthCheckPath: /index/
+    disk:
+      name: shogibench-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: OPENBENCH_SECRET_KEY
+        generateValue: true
+      - key: OPENBENCH_DATA_DIR
+        value: /data
+      - key: OPENBENCH_ALLOWED_HOSTS
+        value: shogibench.onrender.com
+      - key: OPENBENCH_CSRF_TRUSTED_ORIGINS
+        value: https://shogibench.onrender.com
+      - key: WEB_CONCURRENCY
+        value: '2'

@@ -134,16 +134,47 @@ def authenticate(request, requireEnabled=False):
 
     return user
 
+def client_authenticate(request):
+
+    ## Authentication for the client (worker) endpoints only. Workers may
+    ## send either the account password, or a Worker Key token in place of
+    ## the password. Worker Keys never grant access to the website itself.
+
+    try:
+        return authenticate(request, requireEnabled=True)
+    except UnableToAuthenticate:
+        pass
+
+    try:
+        key = WorkerKey.objects.get(token=request.POST['password'], enabled=True)
+
+        # Token must be paired with the username of its owner
+        if key.user.username != request.POST['username']:
+            raise UnableToAuthenticate()
+
+        # Owner must still be an enabled user
+        if not Profile.objects.get(user=key.user).enabled:
+            raise UnableToAuthenticate()
+
+        key.last_used = timezone.now()
+        key.save(update_fields=['last_used'])
+
+        return key.user
+
+    except Exception:
+        raise UnableToAuthenticate()
+
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                            ADMINISTRATIVE VIEWS                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 def register(request):
 
-    if request.method == 'GET':
-        if not OPENBENCH_CONFIG['require_manual_registration']:
-            return render(request, 'register.html', always_allow=True)
+    if OPENBENCH_CONFIG['require_manual_registration']:
         return redirect(request, '/login/', error=ERROR_MESSAGES['manual_registration'])
+
+    if request.method == 'GET':
+        return render(request, 'register.html', always_allow=True)
 
     if request.POST['password1'] != request.POST['password2']:
         return redirect(request, '/register/', error='Passwords do not match')
@@ -257,6 +288,51 @@ def profile_config(request):
         profile.save()
 
     return redirect(request, '/profile/', status=changes)
+
+def workers(request):
+
+    ## Manage Worker Keys, which are dedicated credentials for connecting
+    ## remote worker machines (e.g. rented vast.ai instances). The page also
+    ## displays copy-paste snippets for hooking a machine up to this server.
+
+    if not request.user.is_authenticated:
+        return redirect(request, '/login/')
+
+    profile = Profile.objects.filter(user=request.user).first()
+    if not profile or not profile.enabled:
+        return redirect(request, '/index/', error='Only enabled users can manage Worker Keys')
+
+    if request.method == 'POST':
+
+        action = request.POST.get('action')
+
+        if action == 'create':
+            name  = request.POST.get('name', '').strip()[:64] or 'Unnamed'
+            token = secrets.token_hex(24)
+            WorkerKey.objects.create(user=request.user, name=name, token=token)
+            return redirect(request, '/workers/', status='Created Worker Key "%s"' % (name))
+
+        key = WorkerKey.objects.filter(user=request.user, id=request.POST.get('key_id', 0)).first()
+        if not key:
+            return redirect(request, '/workers/', error='No such Worker Key')
+
+        if action == 'delete':
+            key.delete()
+            return redirect(request, '/workers/', status='Deleted Worker Key "%s"' % (key.name))
+
+        if action in ('enable', 'disable'):
+            key.enabled = action == 'enable'
+            key.save(update_fields=['enabled'])
+            return redirect(request, '/workers/', status='%sd Worker Key "%s"' % (action.capitalize(), key.name))
+
+        return redirect(request, '/workers/', error='Unknown action')
+
+    data = {
+        'keys'       : WorkerKey.objects.filter(user=request.user).order_by('-id'),
+        'server_url' : request.build_absolute_uri('/'),
+    }
+
+    return render(request, 'workers.html', data)
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                               TEST LIST VIEWS                               #
@@ -588,8 +664,8 @@ def verify_worker(function):
 @csrf_exempt
 def client_version_ref(request):
 
-    # Verify the User's credentials
-    try: user = authenticate(request, True)
+    # Verify the User's credentials or Worker Key
+    try: user = client_authenticate(request)
     except UnableToAuthenticate:
         return JsonResponse({ 'error' : 'Bad Credentials' })
 
@@ -603,8 +679,8 @@ def client_version_ref(request):
 @csrf_exempt
 def client_match_runner_version_ref(request):
 
-    # Verify the User's credentials
-    try: user = authenticate(request, True)
+    # Verify the User's credentials or Worker Key
+    try: user = client_authenticate(request)
     except UnableToAuthenticate:
         return JsonResponse({ 'error' : 'Bad Credentials' })
 
@@ -633,8 +709,8 @@ def client_get_build_info(request):
 @csrf_exempt
 def client_worker_info(request):
 
-    # Verify the User's credentials
-    try: user = authenticate(request, True)
+    # Verify the User's credentials or Worker Key
+    try: user = client_authenticate(request)
     except UnableToAuthenticate:
         return JsonResponse({ 'error' : 'Bad Credentials' })
 
@@ -681,8 +757,10 @@ def client_worker_info(request):
 @csrf_exempt
 def client_get_network(request, engine, name):
 
-    # Verify the User's credentials
-    try: django.contrib.auth.login(request, authenticate(request, True))
+    # Verify the User's credentials or Worker Key
+    try:
+        user = client_authenticate(request)
+        django.contrib.auth.login(request, user, backend='django.contrib.auth.backends.ModelBackend')
     except UnableToAuthenticate: return HttpResponse('Bad Credentials')
 
     # Return the requested Neural Network file for the Client
@@ -923,7 +1001,7 @@ def api_pgns(request, pgn_id):
     except: return api_response({ 'error' : 'Requested Workload Id does not exist' })
 
     # 2. Make sure there actually is a PGN attached to the Workload
-    pgn_path = FileSystemStorage('Media/PGNs').path('%d.pgn.tar' % (pgn_id))
+    pgn_path = FileSystemStorage(os.path.join(MEDIA_ROOT, 'PGNs')).path('%d.pgn.tar' % (pgn_id))
     if not os.path.exists(pgn_path):
         return api_response({ 'error' : 'Unable to find PGN for Workload #%d' % (pgn_id) })
 

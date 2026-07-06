@@ -13,7 +13,7 @@
     "test_presets" : {
         "default" : {
             "base_branch"     : "main",
-            "book_name"       : "6moves_v1_shogi.epd",
+            "book_name"       : "6moves_v1_shogi_sfen.epd",
             "test_bounds"     : "[0.00, 4.00]",
             "test_confidence" : "[0.10, 0.05]",
             "win_adj"         : "movecount=3 score=2000",

@@ -143,8 +143,12 @@ def download_client_files(args):
                 with zipfile.ZipFile(temp_zip_file) as zip_file:
                     zip_file.extractall(temp_dir)
 
-                # Copy all files except client.py
-                client_dir = os.path.join(temp_dir, 'OpenBench-%s' % (repo_ref), 'Client')
+                # Copy all files except client.py. Github extracts the
+                # archive as <repo>-<ref>, so derive the name from the URL
+                repo_name = repo_url.rstrip('/').split('/')[-1]
+                if repo_name.endswith('.git'):
+                    repo_name = repo_name[:-len('.git')]
+                client_dir = os.path.join(temp_dir, '%s-%s' % (repo_name, repo_ref), 'Client')
                 for root, dirs, files in os.walk(client_dir):
                     for file in files:
                         if file != 'client.py':

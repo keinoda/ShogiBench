@@ -1,0 +1,109 @@
+{% extends "OpenBench/base.html" %}
+
+{% load static %}
+{% load mytags %}
+
+{% block scripts %}
+    <script src="{% static 'copy_text.js' %}?{{ static_version }}"></script>
+{% endblock %}
+
+{% block content %}
+
+    <h3>Worker Keys</h3>
+
+    <p>
+        Worker Keys are dedicated credentials for connecting worker machines,
+        such as rented vast.ai instances, to this server. On the worker, set
+        <code>OPENBENCH_USERNAME</code> to your username and
+        <code>OPENBENCH_PASSWORD</code> to a Worker Key token. Your account
+        password never has to be copied onto a rented machine, and a leaked
+        token can simply be deleted here. Tokens cannot log into this website.
+    </p>
+
+    <form method="POST" action="/workers/">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+        <div class="form">
+            <div class="col">
+                <div class="row">
+                    <label for="name">Key Name</label>
+                    <input id="name" type="text" name="name" placeholder="vastai-rtx4090">
+                </div>
+                <input type="submit" value="Create Worker Key" class="anchorbutton btn-blue w-100">
+            </div>
+        </div>
+    </form>
+
+    <br>
+
+    {% if keys %}
+        <table class="hoverable">
+
+            <tr class="table-header">
+                <th>Name</th>
+                <th>Token</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Last Used</th>
+                <th>Actions</th>
+            </tr>
+
+            {% for key in keys %}
+                <tr>
+                    <td>{{key.name}}</td>
+                    <td>
+                        <code id="token-{{key.id}}">{{key.token}}</code>
+                        <a class="anchorbutton btn-blue" onclick="copy_text('token-{{key.id}}', false)">Copy</a>
+                    </td>
+                    <td>{{key.enabled|yesno:"Enabled,Disabled"}}</td>
+                    <td><span class="timestamp">{{key.created|date:"U"}}</span></td>
+                    <td>
+                        {% if key.last_used %}
+                            <span class="timestamp">{{key.last_used|date:"U"}}</span>
+                        {% else %}
+                            Never
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="/workers/" style="display: inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="key_id" value="{{key.id}}">
+                            <input type="hidden" name="action" value="{{key.enabled|yesno:'disable,enable'}}">
+                            <input type="submit" value="{{key.enabled|yesno:'Disable,Enable'}}" class="anchorbutton btn-blue">
+                        </form>
+                        <form method="POST" action="/workers/" style="display: inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="key_id" value="{{key.id}}">
+                            <input type="hidden" name="action" value="delete">
+                            <input type="submit" value="Delete" class="anchorbutton btn-red"
+                                onclick="return confirm('Delete Worker Key {{key.name}}?');">
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+
+        </table>
+
+        <br>
+
+        <h3>Connecting a Worker</h3>
+
+        {% with keys.first as newest %}
+            <p>
+                Run the following on the worker machine (adjust the thread count).
+                For a vast.ai template, place it in the <i>On-start Script</i>, or
+                pass the exports as environment variables.
+            </p>
+
+            <pre id="worker-snippet">export OPENBENCH_SERVER={{server_url}}
+export OPENBENCH_USERNAME={{user.username}}
+export OPENBENCH_PASSWORD={{newest.token}}
+git clone --depth 1 -b {{config.client_repo_ref}} {{config.client_repo_url}} shogibench
+cd shogibench/Client
+pip3 install -r requirements.txt
+python3 client.py -T $(nproc) -N 1</pre>
+            <a class="anchorbutton btn-blue" onclick="copy_text('worker-snippet', false)">Copy Snippet</a>
+        {% endwith %}
+    {% endif %}
+
+{% endblock %}

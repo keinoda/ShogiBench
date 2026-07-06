@@ -47,6 +47,24 @@ class Profile(Model):
     def __str__(self):
         return self.user.__str__()
 
+class WorkerKey(Model):
+
+    # Dedicated credential for connecting worker machines (e.g. vast.ai
+    # instances) to the server. The worker passes the owner's username and
+    # this token in place of the account password, so the real password
+    # never has to be copied onto a rented machine. Tokens only authorize
+    # the client endpoints; they can never log into the website.
+
+    user      = ForeignKey(User, PROTECT, related_name='worker_keys')
+    name      = CharField(max_length=64)
+    token     = CharField(max_length=64, unique=True)
+    enabled   = BooleanField(default=True)
+    created   = DateTimeField(auto_now_add=True)
+    last_used = DateTimeField(blank=True, null=True)
+
+    def __str__(self):
+        return '%s (%s)' % (self.name, self.user.username)
+
 class Machine(Model):
 
     user      = ForeignKey(User, PROTECT, related_name='owner')
