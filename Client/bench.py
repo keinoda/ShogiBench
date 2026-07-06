@@ -34,6 +34,7 @@ import multiprocessing
 import os
 import queue
 import re
+import shlex
 import subprocess
 import sys
 
@@ -46,7 +47,7 @@ MAX_BENCH_TIME_SECONDS = 60
 def parse_stream_output(stream):
 
     nps = bench = None # Search through output Stream
-    for line in stream.decode('ascii').strip().split('\n')[::-1]:
+    for line in stream.decode('utf-8', 'replace').strip().split('\n')[::-1]:
 
         # Convert non alpha-numerics to spaces
         line = re.sub(r'[^a-zA-Z0-9 ]+', ' ', line)
@@ -68,15 +69,20 @@ def parse_stream_output(stream):
     bench = int(re.search(r'\d+', bench).group()) if bench else None
     return (bench, nps)
 
-def single_core_bench(binary, network, private, outqueue):
+def single_core_bench(binary, network, private, bench_args, outqueue):
+
+    # Engines may need extra bench arguments to run a deterministic bench,
+    # eg YaneuraOu's "bench 16 1 100000 default nodes" (its default bench
+    # is time-based, which can never reproduce a node count)
+    extra = shlex.split(bench_args) if bench_args else []
 
     # Basic command for Public engines
-    cmd = ['./%s' % (binary), 'bench']
+    cmd = ['./%s' % (binary), 'bench'] + extra
 
     # Adjust to handle setting Networks in Private engines
     if network and private:
         option = 'setoption name EvalFile value %s' % (network)
-        cmd = ['./%s' % (binary), option, 'bench', 'quit']
+        cmd = ['./%s' % (binary), option, 'bench'] + extra + ['quit']
 
     try: # Launch the bench and wait for results
         stdout, stderr = subprocess.Popen(
@@ -87,13 +93,13 @@ def single_core_bench(binary, network, private, outqueue):
     except: # Signal an error with (None, None)
         outqueue.put((None, None))
 
-def multi_core_bench(binary, network, private, threads):
+def multi_core_bench(binary, network, private, threads, bench_args=''):
 
     outqueue = multiprocessing.Queue()
 
     processes = [
         multiprocessing.Process(
-            target=single_core_bench, args=(binary, network, private, outqueue))
+            target=single_core_bench, args=(binary, network, private, bench_args, outqueue))
         for ii in range(threads)
     ]
 
@@ -111,13 +117,13 @@ def multi_core_bench(binary, network, private, threads):
         for process in processes:
             process.join()
 
-def run_benchmark(binary, network, private, threads, sets, expected=None):
+def run_benchmark(binary, network, private, threads, sets, expected=None, bench_args=''):
 
     engine = os.path.basename(binary)
 
     benches, speeds = [], []
     for ii in range(sets):
-        for bench, speed in multi_core_bench(binary, network, private, threads):
+        for bench, speed in multi_core_bench(binary, network, private, threads, bench_args):
             benches.append(bench); speeds.append(speed)
 
     if len(set(benches)) != 1:

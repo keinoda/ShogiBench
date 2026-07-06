@@ -9,8 +9,10 @@
         "cpuflags"  : ["AVX2"],
         "systems"   : ["Linux"],
 
-        "binary"         : "YaneuraOu-by-gcc",
-        "network_option" : "EvalFile",
+        "binary"           : "YaneuraOu-by-gcc",
+        "network_option"   : "EvalDir",
+        "network_filename" : "nn.bin",
+        "bench_args"       : "16 1 100000 default nodes",
 
         "variants"  : {
             "default"                : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE",
