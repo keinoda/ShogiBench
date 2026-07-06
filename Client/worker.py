@@ -425,10 +425,16 @@ class MatchRunner:
     def concurrency_settings(config):
 
         # Already computed for us by the Server
-        return '-concurrency %d -rounds %d' % (
-            config.workload['distribution']['concurrency-per'],
-            config.workload['distribution']['games-per-runner'],
-        )
+        concurrency = config.workload['distribution']['concurrency-per']
+        total_games = config.workload['distribution']['games-per-runner']
+
+        # shogitest plays (pairings x rounds x games) games, where rounds is
+        # the number of games per opening (2, from -repeat). fastchess counts
+        # the total directly via -rounds.
+        if MatchRunner.is_shogi(config):
+            return '-concurrency %d -games %d' % (concurrency, max(1, total_games // 2))
+
+        return '-concurrency %d -rounds %d' % (concurrency, total_games)
 
     @staticmethod
     def adjudication_settings(config):
@@ -847,6 +853,7 @@ def scale_time_control(workload, scale_factor, branch):
 
     # Extract everything from the workload dictionary
     time_control  = workload['test'][branch]['time_control']
+    is_shogi      = 'SHOGI' in workload['test']['book']['name'].upper()
 
     # Searching for Nodes or Depth time controls ("N=", "D=")
     pattern = r'(?P<mode>((N))|(D))=(?P<value>(\d+))'
@@ -855,6 +862,12 @@ def scale_time_control(workload, scale_factor, branch):
     # No scaling is needed for fixed nodes or fixed depth games
     if results:
         mode, value = results.group('mode', 'value')
+
+        # shogitest takes the node limit as the time control itself,
+        # and rejects tc=inf outright
+        if is_shogi and mode == 'N':
+            return 'nodes=%s' % (value)
+
         return 'tc=inf %s=%s' % ({'N' : 'nodes', 'D' : 'depth'}[mode], value)
 
     # Searching for MoveTime or Fixed Time Controls ("MT=")
@@ -864,6 +877,11 @@ def scale_time_control(workload, scale_factor, branch):
     # Scale the time based on this machine's NPS. Add a time Margin to avoid time losses.
     if results:
         mode, value = results.group('mode', 'value')
+
+        # shogitest expects st= in whole milliseconds
+        if is_shogi:
+            return 'st=%d timemargin=250' % (max(1, int(float(value) * scale_factor)))
+
         return 'st=%.2f timemargin=250' % ((float(value) * scale_factor / 1000))
 
     # Searching for "X/Y+Z" time controls
