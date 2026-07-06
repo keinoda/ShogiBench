@@ -33,6 +33,13 @@ if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null; then
     SUDO="sudo"
 fi
 
+# Stop any worker started by an earlier run of this script, so re-running
+# it (e.g. from the /workers/ page) never leaves two loops behind
+for pid in $(pgrep -f '[s]hogibench_setup.sh' 2>/dev/null || true); do
+    [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] && kill "$pid" 2>/dev/null || true
+done
+pkill -f '[c]lient.py' 2>/dev/null || true
+
 # Install only the packages that are missing
 PKGS=""
 command -v git     >/dev/null || PKGS="$PKGS git"
@@ -42,14 +49,30 @@ command -v clang++ >/dev/null || PKGS="$PKGS clang"
 command -v g++     >/dev/null || PKGS="$PKGS g++"
 command -v python3 >/dev/null || PKGS="$PKGS python3"
 command -v pip3    >/dev/null || PKGS="$PKGS python3-pip"
+command -v pgrep   >/dev/null || PKGS="$PKGS procps"
 
 if [ -n "$PKGS" ]; then
     $SUDO apt-get update -y
     $SUDO apt-get install -y --no-install-recommends $PKGS
 fi
 
+# Rust toolchain, required to build the shogitest match runner. Distro
+# packages are often too old, so install via rustup when missing.
+if [ -f "$HOME/.cargo/env" ]; then
+    . "$HOME/.cargo/env"
+fi
+
+if ! command -v cargo >/dev/null; then
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+    . "$HOME/.cargo/env"
+fi
+
+export PATH="$HOME/.cargo/bin:$PATH"
+
 if [ ! -d "$SHOGIBENCH_DIR" ]; then
     git clone --depth 1 -b "$SHOGIBENCH_REPO_REF" "$SHOGIBENCH_REPO_URL" "$SHOGIBENCH_DIR"
+else
+    git -C "$SHOGIBENCH_DIR" pull --ff-only || true
 fi
 
 cd "$SHOGIBENCH_DIR/Client"
