@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 43 # Client version to send to the Server
+CLIENT_VERSION   = 44 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -1361,10 +1361,14 @@ def safe_run_benchmarks(config, branch, engine, network):
     # bench as well; the bench runs from the Client root (prefix '')
     usi_options = stage_network_options(config, branch, prefix='')
 
+    # Optional engine-config patterns that turn warnings in the bench
+    # output (eg a wrong-architecture eval file) into visible failures
+    fatal_patterns = config.workload['test'][branch]['build'].get('bench_fatal_patterns', [])
+
     try:
         print('\nRunning %dx Benchmarks for %s' % (config.threads, name))
         speed, nodes = bench.run_benchmark(
-            binary, network, private, config.threads, 1, expected, bench_args, usi_options)
+            binary, network, private, config.threads, 1, expected, bench_args, usi_options, fatal_patterns)
 
     except utils.OpenBenchBadBenchException as error:
         ServerReporter.report_bad_bench(config, error.message)
