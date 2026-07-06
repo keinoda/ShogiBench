@@ -65,6 +65,21 @@ class WorkerKey(Model):
     def __str__(self):
         return '%s (%s)' % (self.name, self.user.username)
 
+class SSHCredential(Model):
+
+    # Server-side SSH keypair used by the "Connect over SSH" feature on the
+    # /workers/ page. The user registers the public key with their machine
+    # provider (e.g. vast.ai account SSH keys), after which the server can
+    # bootstrap a worker on an instance from just its host:port.
+
+    user        = OneToOneField(User, CASCADE, related_name='ssh_credential')
+    private_key = CharField(max_length=8192)
+    public_key  = CharField(max_length=1024)
+    created     = DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return 'SSH key for %s' % (self.user.username)
+
 class Machine(Model):
 
     user      = ForeignKey(User, PROTECT, related_name='owner')

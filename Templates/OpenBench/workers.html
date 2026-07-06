@@ -86,7 +86,56 @@
 
         <br>
 
-        <h3>Connecting a Worker</h3>
+        <h3>Connect an Instance over SSH</h3>
+
+        <p>
+            Paste the instance's SSH address (e.g. vast.ai's
+            <code>ssh -p 12345 root@ssh4.vast.ai</code>, or <code>host:port</code>)
+            and the server will log in, install everything, and start the worker
+            for you. For this to work, the instance must accept the following
+            public key — add it once to your vast.ai account under
+            <i>Account &rsaquo; SSH Keys</i>, and every new instance will include
+            it automatically. For an already-running instance, append it to
+            <code>~/.ssh/authorized_keys</code>, or attach it from the vast.ai
+            console if available.
+        </p>
+
+        <pre id="ssh-public-key" style="white-space: pre-wrap; word-break: break-all;">{{ssh_public_key}}</pre>
+        <a class="anchorbutton btn-blue" onclick="copy_text('ssh-public-key', false)">Copy Public Key</a>
+
+        <br><br>
+
+        <form method="POST" action="/workers/connect/">
+            {% csrf_token %}
+            <div class="form">
+                <div class="col">
+                    <div class="row">
+                        <label for="ssh_target">SSH Address</label>
+                        <input id="ssh_target" type="text" name="ssh_target"
+                            placeholder="ssh -p 12345 root@ssh4.vast.ai">
+                    </div>
+                    <div class="row">
+                        <label for="key_id">Worker Key</label>
+                        <select id="key_id" name="key_id">
+                            {% for key in keys %}
+                                {% if key.enabled %}
+                                    <option value="{{key.id}}">{{key.name}}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="row">
+                        <label for="threads">Threads</label>
+                        <input id="threads" type="text" name="threads" placeholder="(default: all cores)">
+                    </div>
+                    <input type="submit" value="Connect &amp; Start Worker" class="anchorbutton btn-blue w-100">
+                </div>
+            </div>
+        </form>
+
+        <br>
+
+        <h3>Connecting a Worker Manually</h3>
 
         {% with keys.first as newest %}
             <p>
