@@ -297,9 +297,14 @@ def network_disambiguate(engine, identifier):
 
 def network_upload(request, engine, name):
 
-    # Extract and process the Network file to produce a SHA
+    # Hash the Network in chunks: files can be hundreds of MB, and reading
+    # them whole kills small servers. Django has already streamed the upload
+    # to a temp file at this point, so memory stays flat.
     netfile = request.FILES['netfile']
-    sha256  = hashlib.sha256(netfile.file.read()).hexdigest()[:8].upper()
+    sha     = hashlib.sha256()
+    for chunk in netfile.chunks():
+        sha.update(chunk)
+    sha256 = sha.hexdigest()[:8].upper()
 
     # Rejecct Networks with strange characters
     if not re.match(r'^[a-zA-Z0-9_.-]+$', name):

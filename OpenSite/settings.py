@@ -59,6 +59,11 @@ PUBLIC_URL = os.environ.get(
 DATA_DIR = os.environ.get('OPENBENCH_DATA_DIR', BASE_DIR)
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Stream large uploads (Networks are 100-200MB) to the data volume, so the
+# final save into /Media/ is a cheap same-filesystem rename
+FILE_UPLOAD_TEMP_DIR = os.path.join(DATA_DIR, 'tmp')
+os.makedirs(FILE_UPLOAD_TEMP_DIR, exist_ok=True)
+
 HTML_MINIFY   = True
 APPEND_SLASH  = True
 

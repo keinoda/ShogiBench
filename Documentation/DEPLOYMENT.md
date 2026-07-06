@@ -291,7 +291,30 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
    (EvalDir+固定ファイル名しかない場合はフォークに追加してください)
 3. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
 
-## 7. shogitest フォーク(keinoda/shogitest)
+## 7. ネットワーク(評価関数)のアップロード
+
+100〜200MB級のファイルはストリーミング処理されるため、512MBの小さな
+サーバーでも問題ありません。時間のかかるアップロードはサーバーを
+占有しません(他のページは並行して応答します)。
+
+ブラウザを開いたままにしたくない場合は、**手元のマシンからCLIで
+バックグラウンドアップロード**できます:
+
+```sh
+nohup curl -sS -X POST https://<あなたのサーバー>/scripts/ \
+  -F action=UPLOAD_NETWORK \
+  -F engine=YaneuraOu \
+  -F name=mynet.bin \
+  -F username=<ユーザー名> -F password=<アカウントのパスワード> \
+  -F netfile=@/path/to/nn.bin > upload.log 2>&1 &
+```
+
+- ここは Web ログインと同じ扱いのため、ワーカーキーではなく
+  **アカウントのパスワード**が必要です(approver 権限も必要)
+- Fly.io のディスク容量に注意: ネットは `/data` のボリュームに保存されます。
+  足りなくなったら `fly volumes extend <volume-id> -s <GB>` で拡張できます
+
+## 8. shogitest フォーク(keinoda/shogitest)
 
 対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.2)。
 本家からの主な変更:
