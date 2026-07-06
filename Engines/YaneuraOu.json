@@ -1,0 +1,62 @@
+{
+    "private" : false,
+    "nps"     : 1000000,
+    "source"  : "https://github.com/keinoda/YaneuraOu",
+
+    "build" : {
+        "path"      : "source",
+        "compilers" : ["clang++>=16"],
+        "cpuflags"  : ["AVX2"],
+        "systems"   : ["Linux"],
+
+        "binary"         : "YaneuraOu-by-gcc",
+        "network_option" : "EvalFile",
+
+        "variants"  : {
+            "default"     : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE",
+            "NNUE"        : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE",
+            "NNUE-KP256"  : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE_KP256",
+            "KPPT"        : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_KPPT",
+            "KPP_KKPT"    : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_KPP_KKPT",
+            "MATERIAL"    : "normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_MATERIAL",
+            "tournament"  : "tournament COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE"
+        }
+    },
+
+    "test_presets" : {
+        "default" : {
+            "base_branch"     : "master",
+            "book_name"       : "6moves_v1_shogi_sfen.epd",
+            "test_bounds"     : "[0.00, 4.00]",
+            "test_confidence" : "[0.10, 0.05]",
+            "win_adj"         : "movecount=3 score=2000",
+            "draw_adj"        : "movenumber=40 movecount=8 score=10"
+        },
+
+        "STC" : {
+            "both_options"      : "Threads=1 Hash=64",
+            "both_time_control" : "8.0+0.08",
+            "workload_size"     : 32
+        },
+
+        "LTC" : {
+            "both_options"      : "Threads=1 Hash=256",
+            "both_time_control" : "40.0+0.4",
+            "workload_size"     : 8
+        },
+
+        "25k nodes" : {
+            "both_options"      : "Threads=1 Hash=64",
+            "both_time_control" : "N=25000",
+            "workload_size"     : 128
+        }
+    },
+
+    "tune_presets" : {
+        "default" : {
+            "book_name" : "6moves_v1_shogi_sfen.epd",
+            "win_adj"   : "movecount=3 score=2000",
+            "draw_adj"  : "movenumber=40 movecount=8 score=10"
+        }
+    }
+}

@@ -143,6 +143,8 @@ class Test(Model):
     dev_network      = CharField(max_length=256, blank=True)
     dev_netname      = CharField(max_length=256, blank=True)
     dev_time_control = CharField(max_length=32)
+    dev_build_name   = CharField(max_length=64,  default='default')
+    dev_build_args   = CharField(max_length=256, blank=True, default='')
 
     # Base Engine, and all of its settings
     base              = ForeignKey('Engine', PROTECT, related_name='base')
@@ -152,6 +154,8 @@ class Test(Model):
     base_network      = CharField(max_length=256, blank=True)
     base_netname      = CharField(max_length=256, blank=True)
     base_time_control = CharField(max_length=32)
+    base_build_name   = CharField(max_length=64,  default='default')
+    base_build_args   = CharField(max_length=256, blank=True, default='')
 
     # Changable Test Parameters
     workload_size = IntegerField(default=32)

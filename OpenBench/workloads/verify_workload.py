@@ -77,6 +77,7 @@ def verify_test_creation(errors, request):
         (verify_configuration  , 'dev_engine', 'Dev Engine', 'engines'),
         (verify_github_repo    , 'dev_repo'),
         (verify_network        , 'dev_network', 'Dev Network', 'dev_engine'),
+        (verify_build_variant  , 'dev_build', 'Dev Build', 'dev_engine'),
         (verify_options        , 'dev_options', 'Threads', 'Dev Options'),
         (verify_options        , 'dev_options', 'Hash', 'Dev Options'),
         (verify_time_control   , 'dev_time_control', 'Dev Time Control'),
@@ -85,6 +86,7 @@ def verify_test_creation(errors, request):
         (verify_configuration  , 'base_engine', 'Base Engine', 'engines'),
         (verify_github_repo    , 'base_repo'),
         (verify_network        , 'base_network', 'Base Network', 'base_engine'),
+        (verify_build_variant  , 'base_build', 'Base Build', 'base_engine'),
         (verify_options        , 'base_options', 'Threads', 'Base Options'),
         (verify_options        , 'base_options', 'Hash', 'Base Options'),
         (verify_time_control   , 'base_time_control', 'Base Time Control'),
@@ -133,6 +135,7 @@ def verify_tune_creation(errors, request):
         (verify_configuration         , 'dev_engine', 'Engine', 'engines'),
         (verify_github_repo           , 'dev_repo'),
         (verify_network               , 'dev_network', 'Network', 'dev_engine'),
+        (verify_build_variant         , 'dev_build', 'Build', 'dev_engine'),
         (verify_options               , 'dev_options', 'Threads', 'Options'),
         (verify_options               , 'dev_options', 'Hash', 'Options'),
         (verify_time_control          , 'dev_time_control', 'Time Control'),
@@ -180,6 +183,7 @@ def verify_datagen_creation(errors, request):
         (verify_configuration  , 'dev_engine', 'Dev Engine', 'engines'),
         (verify_github_repo    , 'dev_repo'),
         (verify_network        , 'dev_network', 'Dev Network', 'dev_engine'),
+        (verify_build_variant  , 'dev_build', 'Dev Build', 'dev_engine'),
         (verify_options        , 'dev_options', 'Threads', 'Dev Options'),
         (verify_options        , 'dev_options', 'Hash', 'Dev Options'),
         (verify_time_control   , 'dev_time_control', 'Dev Time Control'),
@@ -188,6 +192,7 @@ def verify_datagen_creation(errors, request):
         (verify_configuration  , 'base_engine', 'Base Engine', 'engines'),
         (verify_github_repo    , 'base_repo'),
         (verify_network        , 'base_network', 'Base Network', 'base_engine'),
+        (verify_build_variant  , 'base_build', 'Base Build', 'base_engine'),
         (verify_options        , 'base_options', 'Threads', 'Base Options'),
         (verify_options        , 'base_options', 'Hash', 'Base Options'),
         (verify_time_control   , 'base_time_control', 'Base Time Control'),
@@ -269,6 +274,14 @@ def verify_network(errors, request, field, field_name, engine_field):
         if request.POST[field] == '': return
         Network.objects.get(engine=request.POST[engine_field], sha256=request.POST[field])
     except: errors.append('Unknown Network Provided for {0}'.format(field_name))
+
+def verify_build_variant(errors, request, field, field_name, engine_field):
+    try:
+        engine   = request.POST[engine_field]
+        variant  = request.POST.get(field, 'default')
+        variants = OpenBench.config.OPENBENCH_CONFIG['engines'][engine]['build']['variants']
+        assert variant in variants
+    except: errors.append('Unknown Build Variant Provided for {0}'.format(field_name))
 
 def verify_test_mode(errors, request, field):
     try: assert request.POST[field] in ['SPRT', 'GAMES']

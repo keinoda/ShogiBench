@@ -5,9 +5,12 @@
 
     "build" : {
         "path"      : "",
-        "compilers" : ["clang++"],
+        "compilers" : ["clang++>=17"],
         "cpuflags"  : ["AVX2"],
-        "systems"   : ["Linux", "Windows", "Darwin"]
+        "systems"   : ["Linux", "Windows", "Darwin"],
+        "variants"  : {
+            "default" : ""
+        }
     },
 
     "test_presets" : {

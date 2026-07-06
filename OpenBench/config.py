@@ -73,6 +73,14 @@ def load_engine_config(engine_name):
         verify_engine_basics(conf)
         verify_engine_build(engine_name, conf)
 
+        # Build variants: named sets of extra make arguments, letting one
+        # branch produce different engines (eg YANEURAOU_EDITION=...). The
+        # 'default' variant always exists and adds nothing.
+        conf['build'].setdefault('variants', {})
+        conf['build']['variants'].setdefault('default', '')
+        assert all(type(k) == str and type(v) == str
+                   for k, v in conf['build']['variants'].items())
+
         for preset_type in ['test_presets', 'tune_presets', 'datagen_presets']:
             if preset_type not in conf.keys() or 'default' not in conf[preset_type].keys():
                 conf[preset_type] = { 'default' : {} }
@@ -147,18 +155,21 @@ def verify_engine_test_preset(test_preset):
         'both_network',
         'both_options',
         'both_time_control',
+        'both_build',
 
         'dev_branch',
         'dev_bench',
         'dev_network',
         'dev_options',
         'dev_time_control',
+        'dev_build',
 
         'base_branch',
         'base_bench',
         'base_network',
         'base_options',
         'base_time_control',
+        'base_build',
 
         'test_bounds',
         'test_confidence',

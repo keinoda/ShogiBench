@@ -227,6 +227,8 @@ def workload_to_dictionary(test, result, machine):
         'netname'      : test.dev_netname,
         'time_control' : test.dev_time_control,
         'build'        : OPENBENCH_CONFIG['engines'][test.dev_engine]['build'],
+        'build_name'   : test.dev_build_name,
+        'build_args'   : test.dev_build_args,
         'private'      : OPENBENCH_CONFIG['engines'][test.dev_engine]['private'],
     }
 
@@ -242,6 +244,8 @@ def workload_to_dictionary(test, result, machine):
         'netname'      : test.base_netname,
         'time_control' : test.base_time_control,
         'build'        : OPENBENCH_CONFIG['engines'][test.base_engine]['build'],
+        'build_name'   : test.base_build_name,
+        'build_args'   : test.base_build_args,
         'private'      : OPENBENCH_CONFIG['engines'][test.base_engine]['private'],
     }
 

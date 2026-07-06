@@ -23,6 +23,7 @@ import hashlib
 import os
 import platform
 import requests
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -153,10 +154,12 @@ def read_git_credentials(engine):
     raise OpenBenchMissingAPICredentialsException('%s not found' % fname)
 
 
-def engine_binary_name(engine, commit_sha, net_path, private):
+def engine_binary_name(engine, commit_sha, net_path, private, build_args=''):
     name = '%s-%s' % (engine, commit_sha.upper()[:8])
     if net_path and not private:
         name += '-%s' % (net_path[-8:])
+    if build_args and not private: # Distinguish binaries built with different make args
+        name += '-%s' % (hashlib.sha256(build_args.encode('utf-8')).hexdigest()[:8].upper())
     return name
 
 def check_for_engine_binary(out_path):
@@ -177,7 +180,7 @@ def check_for_engine_binary(out_path):
         os.rename(out_path, '%s.exe' % (out_path))
         return '%s.exe' % (out_path)
 
-def makefile_command(net_path, make_path, out_path, compiler):
+def makefile_command(net_path, make_path, out_path, compiler, build_args=''):
 
     # Build with -j, and EXE= to contol the output location
     command = ['make', '-j', 'EXE=%s' % (out_path)]
@@ -190,6 +193,10 @@ def makefile_command(net_path, make_path, out_path, compiler):
     # Build with EVALFILE= to embed NNUE files
     if net_path:
         command += ['EVALFILE=%s' % (os.path.abspath(net_path).replace('\\', '/'))]
+
+    # Append the Build Variant's extra targets and arguments, if any
+    if build_args:
+        command += shlex.split(build_args)
 
     return command
 
@@ -312,7 +319,7 @@ def download_network(server, username, password, engine, net_name, net_sha, net_
         os.remove(net_path)
         raise OpenBenchCorruptedNetworkException('Invalid SHA for %s' % (net_name))
 
-def download_public_engine(engine, net_path, branch, source, make_path, out_path, compiler=None):
+def download_public_engine(engine, net_path, branch, source, make_path, out_path, compiler=None, build_args='', alt_binary=''):
 
     # Check to see if we already have the binary
     if check_for_engine_binary(out_path):
@@ -342,7 +349,7 @@ def download_public_engine(engine, net_path, branch, source, make_path, out_path
         # Prepare the MAKEFILE command
         make_path = os.path.join(src_path, make_path)
         bin_path  = os.path.join(make_path, os.path.basename(out_path))
-        make_cmd  = makefile_command(net_path, make_path, os.path.basename(out_path), compiler)
+        make_cmd  = makefile_command(net_path, make_path, os.path.basename(out_path), compiler, build_args)
 
         # Build the engine, which will produce a binary to bin_path, to be moved after
         process     = subprocess.Popen(make_cmd, cwd=make_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -352,6 +359,12 @@ def download_public_engine(engine, net_path, branch, source, make_path, out_path
         if process.returncode:
             message = 'Error during compilation. The logs have been sent to the server'
             raise OpenBenchBuildFailedException(message, comp_output)
+
+        # Some Makefiles ignore EXE= and produce a fixed binary name (set as
+        # build.binary in the engine config); rename it to the expected path
+        if not check_for_engine_binary(bin_path) and alt_binary:
+            if (found := check_for_engine_binary(os.path.join(make_path, alt_binary))):
+                shutil.move(found, bin_path + ('.exe' if found.endswith('.exe') else ''))
 
         # Move the binary to the proper out_path, account for Windows and cross-drive moves
         if check_for_engine_binary(bin_path):
