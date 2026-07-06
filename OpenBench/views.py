@@ -475,23 +475,44 @@ def server_public_url(request):
     url = getattr(settings, 'PUBLIC_URL', None) or request.build_absolute_uri('/')
     return url if url.endswith('/') else url + '/'
 
-def get_or_create_ssh_credential(user):
+def load_server_ssh_key():
 
-    ## Each user gets one server-side SSH keypair. The public half is shown
-    ## on the /workers/ page for registration with vast.ai (or any provider);
-    ## the private half never leaves the server.
+    ## The server logs into instances with one shared private key, provided
+    ## by the admin: either the OPENBENCH_SSH_PRIVATE_KEY env var (on Fly:
+    ## fly secrets set OPENBENCH_SSH_PRIVATE_KEY="$(cat key)") or a key file
+    ## at settings.SSH_PRIVATE_KEY_FILE. The public half is registered with
+    ## the provider (eg vast.ai's Account > SSH Keys), so every rented
+    ## instance accepts it. Returns a paramiko key, or None if unset.
 
-    if (credential := SSHCredential.objects.filter(user=user).first()):
-        return credential
+    from django.conf import settings
 
-    key = paramiko.RSAKey.generate(3072)
+    material = getattr(settings, 'SSH_PRIVATE_KEY', '') or ''
 
-    private_io = io.StringIO()
-    key.write_private_key(private_io)
-    public_key = 'ssh-rsa %s shogibench-%s' % (key.get_base64(), user.username)
+    # Keys pasted through some UIs arrive with literal \n escapes
+    if '\\n' in material and '\n' not in material:
+        material = material.replace('\\n', '\n')
 
-    return SSHCredential.objects.create(
-        user=user, private_key=private_io.getvalue(), public_key=public_key)
+    if not material.strip():
+        key_file = getattr(settings, 'SSH_PRIVATE_KEY_FILE', '')
+        if key_file and os.path.exists(key_file):
+            with open(key_file) as fin:
+                material = fin.read()
+
+    if not material.strip():
+        return None
+
+    for key_type in [paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey]:
+        try: return key_type.from_private_key(io.StringIO(material))
+        except Exception: continue
+
+    return None
+
+def ssh_key_fingerprint(pkey):
+
+    import base64
+    digest = hashlib.sha256(pkey.asbytes()).digest()
+    key_name = pkey.get_name().replace('ssh-', '').upper()
+    return '%s SHA256:%s' % (key_name, base64.b64encode(digest).decode().rstrip('='))
 
 def parse_ssh_target(text):
 
@@ -513,15 +534,14 @@ def parse_ssh_target(text):
 
     raise ValueError('Unrecognized SSH target: %s' % (text))
 
-def launch_worker_over_ssh(request, credential, worker_key, target, threads):
+def launch_worker_over_ssh(request, pkey, worker_key, target, threads):
 
-    ## Connect to the instance with the stored keypair, upload the bootstrap
+    ## Connect to the instance with the server's key, upload the bootstrap
     ## script over SFTP, and launch it detached with the connection settings
     ## for this server baked in. Returns a status string, or raises.
 
     user, host, port = parse_ssh_target(target)
 
-    pkey   = paramiko.RSAKey.from_private_key(io.StringIO(credential.private_key))
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -589,20 +609,27 @@ def worker_connect(request):
     if request.method != 'POST':
         return redirect(request, '/workers/')
 
-    worker_key = WorkerKey.objects.filter(
-        user=request.user, id=request.POST.get('key_id', 0), enabled=True).first()
-
-    if not worker_key:
-        return redirect(request, '/workers/', error='Select an enabled Worker Key')
+    # A Worker Key is the API credential baked into the worker. Fall back
+    # to any enabled key, and create one silently if the user has none
+    worker_key = (
+        WorkerKey.objects.filter(
+            user=request.user, id=request.POST.get('key_id', 0), enabled=True).first()
+        or WorkerKey.objects.filter(user=request.user, enabled=True).order_by('-id').first()
+        or WorkerKey.objects.create(
+            user=request.user, name='auto', token=secrets.token_hex(24)))
 
     if not (target := request.POST.get('ssh_target', '').strip()):
         return redirect(request, '/workers/', error='Provide the instance\'s SSH host and port')
 
-    credential = get_or_create_ssh_credential(request.user)
+    if not (pkey := load_server_ssh_key()):
+        return redirect(request, '/workers/', error=
+            'サーバーにSSH秘密鍵が設定されていません。管理者が一度だけ '
+            'fly secrets set OPENBENCH_SSH_PRIVATE_KEY="$(cat <秘密鍵ファイル>)" '
+            'を実行してください(vast.ai に公開鍵を登録済みの鍵)')
 
     try:
         status = launch_worker_over_ssh(
-            request, credential, worker_key, target, request.POST.get('threads', '').strip())
+            request, pkey, worker_key, target, request.POST.get('threads', '').strip())
         return redirect(request, '/workers/', status=status)
 
     except ValueError as error:
@@ -610,8 +637,8 @@ def worker_connect(request):
 
     except Exception as error:
         message = 'SSH connection failed: %s\n' % (error)
-        message += 'Check that the public key below is authorized on the instance,'
-        message += ' and that the host and port are correct.'
+        message += 'Check that the host and port are correct, and that the key '
+        message += 'configured on the server is authorized on the instance.'
         return redirect(request, '/workers/', error=message)
 
 def workers(request):
@@ -652,10 +679,13 @@ def workers(request):
 
         return redirect(request, '/workers/', error='Unknown action')
 
+    server_key = load_server_ssh_key()
+
     data = {
         'keys'       : WorkerKey.objects.filter(user=request.user).order_by('-id'),
         'server_url' : server_public_url(request),
-        'ssh_public_key' : get_or_create_ssh_credential(request.user).public_key,
+        'ssh_key_configured'  : server_key is not None,
+        'ssh_key_fingerprint' : ssh_key_fingerprint(server_key) if server_key else '',
     }
 
     return render(request, 'workers.html', data)

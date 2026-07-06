@@ -59,6 +59,14 @@ PUBLIC_URL = os.environ.get(
 DATA_DIR = os.environ.get('OPENBENCH_DATA_DIR', BASE_DIR)
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Private key the "Connect over SSH" feature uses to log into rented
+# instances (register its public half with vast.ai). Set the key itself:
+#   fly secrets set OPENBENCH_SSH_PRIVATE_KEY="$(cat <keyfile>)"
+# or place a key file at OPENBENCH_SSH_PRIVATE_KEY_FILE (default below).
+SSH_PRIVATE_KEY      = os.environ.get('OPENBENCH_SSH_PRIVATE_KEY', '')
+SSH_PRIVATE_KEY_FILE = os.environ.get(
+    'OPENBENCH_SSH_PRIVATE_KEY_FILE', os.path.join(DATA_DIR, 'ssh_key'))
+
 # Stream large uploads (Networks are 100-200MB) to the data volume, so the
 # final save into /Media/ is a cheap same-filesystem rename
 FILE_UPLOAD_TEMP_DIR = os.path.join(DATA_DIR, 'tmp')
