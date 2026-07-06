@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 49 # Client version to send to the Server
+CLIENT_VERSION   = 50 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -1359,13 +1359,16 @@ def stage_network_options(config, branch, prefix=''):
 
     # The worker owns the file-location options: an eval_options.txt that
     # tries to override them (eg EvalDir=eval) would silently point the
-    # engine at a nonexistent eval, so those lines are dropped
+    # engine at a nonexistent eval, so those lines are dropped. Path-type
+    # options can reference the staging directory as {DIR}, since its
+    # location is unknowable when the file is written (eg
+    # LS_PROGRESS_COEFF={DIR}/coeff.bin points at a fellow aux file)
     managed = { name.lower() for name, value in pairs }
     for name, value in extra_pairs:
         if name.lower() in managed:
             print ('Ignoring eval_options.txt line: %s is managed by the worker' % (name))
             continue
-        pairs.append((name, value))
+        pairs.append((name, value.replace('{DIR}', os.path.join(prefix, dir_path))))
 
     return pairs
 
