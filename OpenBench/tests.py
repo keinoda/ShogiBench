@@ -23,7 +23,13 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 
-from OpenBench.models import BuildVariant, Profile, SSHCredential, WorkerKey
+import hashlib
+import tempfile
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
+
+from OpenBench.models import BuildVariant, Network, Profile, SSHCredential, WorkerKey
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
 
 class WorkerKeyAuthTests(TestCase):
@@ -158,6 +164,38 @@ class WorkerKeyPageTests(TestCase):
         response = self.client.get('/workers/')
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'box1')
+
+class NetworkUploadTests(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user('alice', 'a@example.com', 'account-password')
+        Profile.objects.create(user=self.user, enabled=True, approver=True)
+        self.client.login(username='alice', password='account-password')
+        self.media = tempfile.mkdtemp()
+
+    def test_upload_hashes_in_chunks_and_saves(self):
+        content  = b'\x00\x01\x02\x03' * 100_000  # ~400KB, forces multiple chunks
+        expected = hashlib.sha256(content).hexdigest()[:8].upper()
+
+        with override_settings(MEDIA_ROOT=self.media):
+            response = self.client.post('/networks/Stoat/UPLOAD/mynet.bin/', {
+                'netfile' : SimpleUploadedFile('mynet.bin', content) })
+
+        network = Network.objects.filter(engine='Stoat', name='mynet.bin').first()
+        self.assertIsNotNone(network)
+        self.assertEqual(network.sha256, expected)
+
+    def test_upload_requires_approver(self):
+        other = User.objects.create_user('bob', 'b@example.com', 'password2')
+        Profile.objects.create(user=other, enabled=True, approver=False)
+        client = Client()
+        client.login(username='bob', password='password2')
+
+        with override_settings(MEDIA_ROOT=self.media):
+            client.post('/networks/Stoat/UPLOAD/theirs.bin/', {
+                'netfile' : SimpleUploadedFile('theirs.bin', b'data') })
+
+        self.assertFalse(Network.objects.filter(name='theirs.bin').exists())
 
 class BuildCommandNormalizationTests(TestCase):
 
