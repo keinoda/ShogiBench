@@ -12,7 +12,7 @@
     "shogitest_repo_ref"    : "shogibench",
 
     "use_cross_approval"          : false,
-    "require_login_to_view"       : false,
+    "require_login_to_view"       : true,
     "require_manual_registration" : true,
     "balance_engine_throughputs"  : false,
 
