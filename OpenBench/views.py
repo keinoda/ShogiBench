@@ -365,19 +365,26 @@ def launch_worker_over_ssh(request, credential, worker_key, target, threads):
 
         env_line = ' '.join('%s=%s' % (k, shlex.quote(v)) for k, v in exports.items())
 
+        # The bootstrap runs fully detached in a subshell with all of its
+        # descriptors pointed away from the SSH channel; otherwise the
+        # long-lived worker process can hold the channel open forever.
         command = (
             'chmod +x /tmp/shogibench_setup.sh && '
-            'export %s && '
-            'nohup /tmp/shogibench_setup.sh > "$HOME/shogibench-worker.log" 2>&1 '
-            '< /dev/null & sleep 1 && echo LAUNCHED'
+            '( export %s ; nohup /tmp/shogibench_setup.sh '
+            '> "$HOME/shogibench-worker.log" 2>&1 < /dev/null & ) && '
+            'echo LAUNCHED'
         ) % (env_line)
 
-        stdin, stdout, stderr = client.exec_command(command, timeout=30)
-        output = stdout.read().decode('utf-8', 'replace')
+        # Read a single line rather than waiting for channel EOF, so a
+        # stray descriptor on the remote side can never hang this request
+        stdin, stdout, stderr = client.exec_command(command, timeout=20)
+        output = stdout.readline()
+
+        if isinstance(output, bytes):
+            output = output.decode('utf-8', 'replace')
 
         if 'LAUNCHED' not in output:
-            error = stderr.read().decode('utf-8', 'replace').strip()
-            raise Exception(error or 'Bootstrap did not start')
+            raise Exception('Bootstrap did not start (got: %s)' % (output.strip() or 'no output'))
 
         return 'Launched worker on %s:%d as %s. Logs: ~/shogibench-worker.log' % (host, port, user)
 

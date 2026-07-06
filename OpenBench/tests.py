@@ -199,7 +199,7 @@ class WorkerConnectTests(TestCase):
         self.client.get('/workers/')  # generate the keypair
 
         connection = mock_ssh_client.return_value
-        stdout = MagicMock(); stdout.read.return_value = b'LAUNCHED\n'
+        stdout = MagicMock(); stdout.readline.return_value = 'LAUNCHED\n'
         connection.exec_command.return_value = (MagicMock(), stdout, MagicMock())
 
         response = self.client.post('/workers/connect/', {
