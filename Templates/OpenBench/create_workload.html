@@ -67,7 +67,7 @@
                     <label for="dev_branch" > {{dev_text}} ブランチ </label> <input id="dev_branch" name="dev_branch" autofocus>
                 </div>
                 <div class="row">
-                    <label for="dev_bench" > {{dev_text}} Bench </label> <input value="Autofill" id="dev_bench" name="dev_bench">
+                    <label for="dev_bench" title="空欄なら照合なし。数値を入れるとワーカーがbench値を照合します"> {{dev_text}} Bench </label> <input id="dev_bench" name="dev_bench" placeholder="(任意) 空欄=照合なし / 数値=bench照合">
                 </div>
                 <div class="row">
                     <label for="dev_network" > {{dev_text}} ネットワーク </label> <select id="dev_network" name="dev_network"></select>
@@ -94,7 +94,7 @@
                         <label for="base_branch"> Base ブランチ </label> <input id="base_branch" name="base_branch">
                     </div>
                     <div class="row">
-                        <label for="base_bench"> Base Bench </label> <input value="Autofill" id="base_bench" name="base_bench">
+                        <label for="base_bench" title="空欄なら照合なし。数値を入れるとワーカーがbench値を照合します"> Base Bench </label> <input id="base_bench" name="base_bench" placeholder="(任意) 空欄=照合なし / 数値=bench照合">
                     </div>
                     <div class="row">
                         <label for="base_network"> Base ネットワーク </label> <select id="base_network" name="base_network"></select>

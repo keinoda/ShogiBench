@@ -455,7 +455,7 @@ def collect_github_info(errors, request, field):
         return (None, None)
 
     # Extract the bench from the web form, or from the commit message
-    if not (bench := determine_bench(request, field, data['commit']['message'])):
+    if (bench := determine_bench(request, field, data['commit']['message'])) is None:
         errors.append('Unable to parse a Bench for %s' % (branch))
         return (None, None)
 
@@ -485,11 +485,19 @@ def requests_illegal_fork(request, field):
 
 def determine_bench(request, field, message):
 
+    raw = request.POST.get('{0}_bench'.format(field), '').strip()
+
+    # An empty field means the bench check is skipped: workers treat an
+    # expected bench of 0 as "measure NPS, but verify nothing". Useful for
+    # engines like YaneuraOu whose bench depends on the build and eval file
+    if raw == '' or raw.lower() in ('skip', 'none', 'n/a', '0'):
+        return 0
+
     # Use the provided bench if possible
-    try: return int(request.POST['{0}_bench'.format(field)])
+    try: return int(raw)
     except: pass
 
-    # Fallback to try to parse the Bench from the commit
+    # Fallback to try to parse the Bench from the commit ("Autofill")
     try:
         benches = re.findall('(?:BENCH|NODES)[ :=]+([0-9,]+)', message, re.IGNORECASE)
         return int(benches[-1].replace(',', ''))

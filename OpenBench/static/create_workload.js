@@ -255,6 +255,11 @@ function apply_preset(preset, workload_type) {
 
 function change_engine(engine, target, workload_type) {
 
+    // Profiles may still point at a renamed or removed engine; falling
+    // back keeps the page initializing instead of dying on a TypeError
+    if (!(engine in config.engines))
+        engine = Object.keys(config.engines)[0];
+
     set_engine(engine, target);
 
     if (target == 'dev')
