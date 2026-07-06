@@ -305,23 +305,63 @@ def normalize_build_command(text):
     ## Turns a pasted build command into the make arguments ShogiBench
     ## stores for a Build Variant. Returns (args, dropped) where dropped
     ## lists the tokens that were removed because the worker manages them
-    ## itself: the make invocation, -j, and EXE=/EVALFILE=/CXX=/CC=.
+    ## itself: the make invocation, -j (any form), and EXE=/EVALFILE=/CXX=/CC=.
+    ##
+    ## Multi-line pastes are handled: backslash continuations are joined,
+    ## `cd` lines and `make clean` invocations are skipped, and the last
+    ## remaining command is used. Quoting of arguments containing spaces
+    ## (eg EXTRA_CPPFLAGS='-DA=1 -DB=2') survives the round-trip.
 
-    kept, dropped = [], []
+    # Join backslash-newline continuations, then split into commands
+    joined   = re.sub(r'\\\s*\n', ' ', text.strip())
+    commands = [
+        part.strip()
+        for line in joined.splitlines()
+        for part in re.split(r'&&|;', line)
+        if part.strip()
+    ]
 
-    for index, token in enumerate(shlex.split(text.strip())):
+    # Skip directory changes and clean invocations
+    candidates = []
+    for command in commands:
+        tokens = shlex.split(command)
+        if not tokens or tokens[0] == 'cd':
+            continue
+        if 'clean' in tokens:
+            continue
+        candidates.append(tokens)
+
+    if not candidates:
+        raise ValueError('No build command found')
+
+    kept, dropped, expect_jobs = [], [], False
+
+    for index, token in enumerate(candidates[-1]):
 
         if index == 0 and token in ('make', 'gmake', 'mingw32-make', 'nmake'):
             dropped.append(token)
             continue
 
-        if re.match(r'^-j\d*$', token) or re.match(r'^(EXE|EVALFILE|CXX|CC)=', token, re.IGNORECASE):
+        # The count following a bare "-j", as in "make -j 8"
+        if expect_jobs and re.match(r'^\d+$', token):
+            dropped.append(token)
+            expect_jobs = False
+            continue
+        expect_jobs = False
+
+        # -j in any form: -j, -j8, -j"$(nproc)"
+        if token.startswith('-j'):
+            dropped.append(token)
+            expect_jobs = token == '-j'
+            continue
+
+        if re.match(r'^(EXE|EVALFILE|CXX|CC)=', token, re.IGNORECASE):
             dropped.append(token)
             continue
 
         kept.append(token)
 
-    return ' '.join(kept), dropped
+    return ' '.join(shlex.quote(token) for token in kept), dropped
 
 def engine_build_variants(engine):
 
