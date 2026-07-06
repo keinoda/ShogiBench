@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 40 # Client version to send to the Server
+CLIENT_VERSION   = 41 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -506,8 +506,22 @@ class MatchRunner:
         # support, eg YaneuraOu) receive it as a runtime option instead, when
         # the engine config sets build.network_option
         net_option = config.workload['test'][branch]['build'].get('network_option')
+        net_fname  = config.workload['test'][branch]['build'].get('network_filename')
         if not private and net_option and network and network != 'None':
-            options += ' %s=%s' % (net_option, os.path.join('../Networks', network))
+
+            if net_fname:
+                # Directory-style engines (YaneuraOu's EvalDir) expect a fixed
+                # file name inside a directory: stage Networks/<sha>-dir/<name>
+                dir_path = os.path.join('Networks', '%s-dir' % (network))
+                os.makedirs(dir_path, exist_ok=True)
+                staged = os.path.join(dir_path, net_fname)
+                if not os.path.exists(staged):
+                    try: os.link(os.path.join('Networks', network), staged)
+                    except OSError: shutil.copyfile(os.path.join('Networks', network), staged)
+                options += ' %s=%s' % (net_option, os.path.join('..', dir_path))
+
+            else:
+                options += ' %s=%s' % (net_option, os.path.join('../Networks', network))
 
         # Set the SyzygyPath if we have them, and are allowed to use them
         if syzygy != 'DISABLED' and config.syzygy_max:
@@ -1297,15 +1311,16 @@ def safe_create_genfens_opening_book(config, dev_name, dev_network):
 
 def safe_run_benchmarks(config, branch, engine, network):
 
-    name     = config.workload['test'][branch]['name']
-    private  = config.workload['test'][branch]['private']
-    expected = int(config.workload['test'][branch]['bench'])
-    binary   = os.path.join('Engines', engine)
+    name       = config.workload['test'][branch]['name']
+    private    = config.workload['test'][branch]['private']
+    expected   = int(config.workload['test'][branch]['bench'])
+    bench_args = config.workload['test'][branch]['build'].get('bench_args', '')
+    binary     = os.path.join('Engines', engine)
 
     try:
         print('\nRunning %dx Benchmarks for %s' % (config.threads, name))
         speed, nodes = bench.run_benchmark(
-            binary, network, private, config.threads, 1, expected)
+            binary, network, private, config.threads, 1, expected, bench_args)
 
     except utils.OpenBenchBadBenchException as error:
         ServerReporter.report_bad_bench(config, error.message)

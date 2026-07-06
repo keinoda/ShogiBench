@@ -280,16 +280,24 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
 - `build.network_option`: `EVALFILE=` での埋め込みに非対応のエンジンは、
   ネットワークを実行時のUSIオプションとして渡します(例: `"EvalFile"`)
 
-### YaneuraOu を使う際の注意(keinoda/YaneuraOu フォーク側の要件)
+### YaneuraOu 対応(実ビルドで検証済み)
 
-1. **bench コマンド**: ワーカーはビルド検証に `./エンジン bench` を実行し、
-   出力から `nodes <数値>` / `<数値> nodes` / `nodes searched <数値>` と
-   `nps <数値>`(または `<数値> nps`)のパターンを読み取ります。
-   この形式の行を bench 終了時に出力する必要があります
-2. **EvalFile オプション**: NNUE系エディションでネットワーク差し替え対戦を
-   する場合、単一ファイルのパスを受け取る `EvalFile` USIオプションが必要です
-   (EvalDir+固定ファイル名しかない場合はフォークに追加してください)
-3. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
+以下は keinoda/YaneuraOu master を実際にビルド・実行して確認済みです:
+
+1. **未知のNNUEアーキテクチャ**(例 `HALFKP_768X2_16_64`)は Makefile が
+   `nnue_arch_gen.py` でヘッダを動的生成するため、ビルドコマンドを
+   そのまま渡すだけで動きます
+2. **bench**: 既定の `bench` は時間ベース(≈60秒・非決定的)なので、
+   engine config の `build.bench_args = "16 1 100000 default nodes"` により
+   ノード制限モードで実行します(決定的・約0.3秒、実測で確認済み)。
+   Bench 欄に入れる値は手元で
+   `./YaneuraOu-by-gcc bench 16 1 100000 default nodes` を実行した際の
+   `Nodes searched` の値です(ビルド設定ごとに異なります)
+3. **ネットワーク配布**: YaneuraOu は `EvalFile` ではなく `EvalDir`+固定名
+   `nn.bin` 方式のため、ワーカーが `Networks/<sha>-dir/nn.bin` を自動で
+   用意して `EvalDir` オプションで渡します(`build.network_option` +
+   `build.network_filename` で設定済み)
+4. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
 
 ## 7. ネットワーク(評価関数)のアップロード
 
