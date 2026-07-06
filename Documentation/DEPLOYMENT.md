@@ -300,11 +300,20 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
    `nn.bin` 方式のため、ワーカーが `Networks/<sha>-dir/nn.bin` を自動で
    用意して `EvalDir` オプションで渡します(`build.network_option` +
    `build.network_filename` で設定済み)
-4. **progress.bin(補助ファイル)**: ネット登録時に「補助ファイル(任意)」欄で
-   一緒にアップロードすると、ワーカーが nn.bin と同じディレクトリに
-   `progress.bin` として配置し、`ProgressFilePath` オプションでその位置を
-   渡します。補助ファイルなしの場合はオプションを渡さず、ビルド時に
-   埋め込まれた既定(`<internal>`)が使われます
+4. **補助ファイル(複数可)**: ネット登録時に「補助ファイル」欄で何個でも
+   一緒にアップロードできます。ワーカーは**すべての補助ファイルを nn.bin と
+   同じディレクトリに元のファイル名で配置**します。さらに:
+   - engine config の `build.network_aux_options` に載っている名前のファイル
+     (例: `"progress.bin": "ProgressFilePath"`)は、そのパスが対応する
+     USIオプションとして渡されます
+   - **`usi_options.txt`** という名前のファイルは特別扱いで、`Name=Value` を
+     1行ずつ書いておくと **bench と対局の両方で必ず setoption として適用**
+     されます(`#` 以降はコメント)。評価関数ごとに指定が必須のオプション
+     (バケット選択方式など)は、ここに書いてネットと一緒に登録しておけば
+     指定漏れが起きません。**値に空白は使えません**
+   - 注意: `usi_options.txt` の内容は bench 結果にも影響するため、
+     オプションを変えると bench 値も変わります(Bench欄は空欄=照合なしが
+     便利です)
 5. MATERIAL エディションは評価ファイル不要なので、パイプラインの動作確認に便利です
 
 ## 7. ネットワーク(評価関数)のアップロード
@@ -322,7 +331,9 @@ nohup curl -sS -X POST https://<あなたのサーバー>/scripts/ \
   -F engine=YaneuraOu-nagisa \
   -F name=mynet.bin \
   -F username=<ユーザー名> -F password=<アカウントのパスワード> \
-  -F netfile=@/path/to/nn.bin > upload.log 2>&1 &
+  -F netfile=@/path/to/nn.bin \
+  -F auxfiles=@/path/to/usi_options.txt \
+  -F auxfiles=@/path/to/progress.bin > upload.log 2>&1 &
 ```
 
 - ここは Web ログインと同じ扱いのため、ワーカーキーではなく

@@ -185,25 +185,40 @@ class NetworkUploadTests(TestCase):
         self.assertIsNotNone(network)
         self.assertEqual(network.sha256, expected)
 
-    def test_upload_with_aux_file(self):
+    def test_upload_with_aux_files(self):
         content = b'\x10\x20' * 50_000
         aux     = b'\x30\x40' * 25_000
+        opts    = b'FV_SCALE=24\nBucketSelect=k3k3\n'
         aux_sha = hashlib.sha256(aux).hexdigest()[:8].upper()
 
         with override_settings(MEDIA_ROOT=self.media), \
              patch('OpenBench.utils.MEDIA_ROOT', self.media):
             self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/withaux.bin/', {
-                'netfile' : SimpleUploadedFile('nn.bin', content),
-                'auxfile' : SimpleUploadedFile('progress.bin', aux) })
+                'netfile'  : SimpleUploadedFile('nn.bin', content),
+                'auxfiles' : [SimpleUploadedFile('progress.bin', aux),
+                              SimpleUploadedFile('usi_options.txt', opts)] })
 
             network = Network.objects.filter(engine='YaneuraOu-nagisa', name='withaux.bin').first()
             self.assertIsNotNone(network)
-            self.assertEqual(network.aux_sha256, aux_sha)
+            self.assertEqual(network.aux_files.count(), 2)
+            self.assertEqual(network.aux_files.get(name='progress.bin').sha256, aux_sha)
 
-            # The aux file is retrievable through the api endpoint
-            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/' % (network.sha256))
-            body = b''.join(response.streaming_content)
-            self.assertEqual(body, aux)
+            # Each aux file is retrievable through the api endpoint by name
+            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/progress.bin/' % (network.sha256))
+            self.assertEqual(b''.join(response.streaming_content), aux)
+
+            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/usi_options.txt/' % (network.sha256))
+            self.assertEqual(b''.join(response.streaming_content), opts)
+
+    def test_upload_with_legacy_single_aux_field(self):
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/oldstyle.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', b'net'),
+                'auxfile' : SimpleUploadedFile('progress.bin', b'prog') })
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='oldstyle.bin')
+            self.assertEqual(network.aux_files.get(name='progress.bin').sha256,
+                             hashlib.sha256(b'prog').hexdigest()[:8].upper())
 
     def test_worker_key_can_download_network(self):
         content = b'\x0a\x0b' * 10_000
@@ -241,7 +256,7 @@ class NetworkUploadTests(TestCase):
             self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/noaux.bin/', {
                 'netfile' : SimpleUploadedFile('nn.bin', b'plain') })
             network = Network.objects.get(engine='YaneuraOu-nagisa', name='noaux.bin')
-            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/' % (network.sha256))
+            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/progress.bin/' % (network.sha256))
             self.assertIn('error', response.json())
 
     def test_upload_requires_approver(self):

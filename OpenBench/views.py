@@ -1280,7 +1280,7 @@ def api_network_download(request, engine, identifier):
     return api_response({ 'error' : 'Engine not found. Check /api/config/ for a full list' })
 
 @csrf_exempt
-def api_network_download_aux(request, engine, identifier):
+def api_network_download_aux(request, engine, identifier, name):
 
     if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
@@ -1288,10 +1288,10 @@ def api_network_download_aux(request, engine, identifier):
     if not (network := OpenBench.utils.network_disambiguate(engine, identifier)):
         return api_response({ 'error' : 'Network %s for Engine %s not found' % (identifier, engine) })
 
-    if not network.aux_sha256:
-        return api_response({ 'error' : 'Network %s has no auxiliary file' % (identifier) })
+    if not (aux := network.aux_files.filter(name=name).first()):
+        return api_response({ 'error' : 'Network %s has no auxiliary file %s' % (identifier, name) })
 
-    return OpenBench.utils.network_download_aux(request, engine, network)
+    return OpenBench.utils.network_download_aux(request, engine, aux)
 
 @csrf_exempt
 def api_network_delete(request, engine, identifier):
