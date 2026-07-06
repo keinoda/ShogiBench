@@ -55,9 +55,59 @@ CONFIG = {
         ('SlowMover', 'int', 100, 50, 200, 10, 0.002),
     ],
 
+    # tune.py の .params ファイルから読む場合はパスを指定 ('parameters' より優先)。
+    # 「名前, 型, 現在値, min, max, C_end(step), R_end(delta)」形式。
+    # 現在値が初期値になり、イテレーションごとに同じファイルへ書き戻されるので、
+    # チューニング後はそのまま `python3 tune.py apply ...` で焼き戻せます
+    'parameters_file' : '',
+
     'state_file' : 'spsa_state.json',
     'log_file'   : 'spsa_log.csv',
 }
+
+# .params ファイルのコメントと [[NOT USED]] 行はそのまま保存する
+PARAM_COMMENTS   = {}
+PARAM_UNUSED     = []
+
+def load_parameters_file():
+
+    path = CONFIG.get('parameters_file')
+    if not path:
+        return
+
+    parameters = []
+    for raw in open(path, encoding='utf-8'):
+        raw = raw.rstrip('\n')
+        if not raw.strip():
+            continue
+        if '[[NOT USED]]' in raw:
+            PARAM_UNUSED.append(raw)
+            continue
+        body    = raw.split('//')[0]
+        comment = raw[len(body):]
+        f = [x.strip() for x in body.split(',')]
+        parameters.append((f[0], f[1], float(f[2]), float(f[3]),
+                           float(f[4]), float(f[5]), float(f[6])))
+        if comment:
+            PARAM_COMMENTS[f[0]] = comment
+
+    CONFIG['parameters'] = parameters
+    print ('%s から %d パラメータを読み込みました (+%d 未使用)'
+           % (path, len(parameters), len(PARAM_UNUSED)))
+
+def save_parameters_file(state):
+
+    path = CONFIG.get('parameters_file')
+    if not path:
+        return
+
+    with open(path, 'w', encoding='utf-8') as fout:
+        for name, dtype, start, vmin, vmax, c_end, r_end in CONFIG['parameters']:
+            fout.write('%s, %s, %s, %s, %s, %s, %s%s\n' % (
+                name, dtype, state['values'][name], vmin, vmax,
+                c_end, r_end, PARAM_COMMENTS.get(name, '')))
+        for raw in PARAM_UNUSED:
+            fout.write(raw + '\n')
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -153,7 +203,12 @@ def run_iteration(k, played):
 
 def main():
 
+    load_parameters_file()
     state = load_state()
+
+    # .params 側に存在するのに state に無いパラメータを補完 (途中追加にも耐える)
+    for name, dtype, start, *_ in CONFIG['parameters']:
+        state['values'].setdefault(name, float(start))
 
     if '--status' in sys.argv:
         print (json.dumps(state, indent=2)); return
@@ -179,6 +234,7 @@ def main():
 
         state['iteration'] = k
         save_state(state)
+        save_parameters_file(state)
 
         summary = '  '.join('%s=%.3f' % (n, v) for n, v in state['values'].items())
         print ('[%4d/%d] W:%d L:%d D:%d  ->  %s' % (
