@@ -29,8 +29,21 @@ import tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
-from OpenBench.models import BuildVariant, Network, Profile, SSHCredential, WorkerKey
+from OpenBench.models import BuildVariant, Network, Profile, WorkerKey
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
+
+TEST_SSH_KEY = None
+
+def test_ssh_key():
+    # One RSA key shared by the whole test run: generation is not free
+    global TEST_SSH_KEY
+    if TEST_SSH_KEY is None:
+        import io, paramiko
+        key = paramiko.RSAKey.generate(2048)
+        buffer = io.StringIO()
+        key.write_private_key(buffer)
+        TEST_SSH_KEY = buffer.getvalue()
+    return TEST_SSH_KEY
 
 class WorkerKeyAuthTests(TestCase):
 
@@ -446,29 +459,28 @@ class WorkerConnectTests(TestCase):
         self.key = WorkerKey.objects.create(user=self.user, name='vast', token='a' * 48)
         self.client.login(username='alice', password='account-password')
 
-    def test_page_creates_and_shows_ssh_public_key(self):
-        response = self.client.get('/workers/')
-        credential = SSHCredential.objects.get(user=self.user)
-        self.assertIn('ssh-rsa ', credential.public_key)
-        self.assertContains(response, credential.public_key)
+    def test_page_shows_setup_instructions_without_key(self):
+        with override_settings(SSH_PRIVATE_KEY='', SSH_PRIVATE_KEY_FILE='/nonexistent'):
+            response = self.client.get('/workers/')
+        self.assertContains(response, 'OPENBENCH_SSH_PRIVATE_KEY')
 
-        # Keypair is generated once, then reused
-        again = self.client.get('/workers/')
-        self.assertEqual(SSHCredential.objects.filter(user=self.user).count(), 1)
+    def test_page_shows_fingerprint_with_key(self):
+        with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
+            response = self.client.get('/workers/')
+        self.assertContains(response, 'SHA256:')
 
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_launches_worker(self, mock_ssh_client):
-        self.client.get('/workers/')  # generate the keypair
-
         connection = mock_ssh_client.return_value
         stdout = MagicMock(); stdout.readline.return_value = 'LAUNCHED\n'
         connection.exec_command.return_value = (MagicMock(), stdout, MagicMock())
 
-        response = self.client.post('/workers/connect/', {
-            'ssh_target' : 'ssh -p 12345 root@ssh4.vast.ai',
-            'key_id'     : self.key.id,
-            'threads'    : '',
-        })
+        with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
+            response = self.client.post('/workers/connect/', {
+                'ssh_target' : 'ssh -p 12345 root@ssh4.vast.ai',
+                'key_id'     : self.key.id,
+                'threads'    : '',
+            })
 
         self.assertEqual(response.status_code, 302)
         connection.connect.assert_called_once()
@@ -480,41 +492,55 @@ class WorkerConnectTests(TestCase):
         self.assertIn('OPENBENCH_USERNAME=alice', command)
         self.assertIn('shogibench_setup.sh', command)
 
-    @override_settings(PUBLIC_URL='https://bench.example.com')
     @patch('OpenBench.views.paramiko.SSHClient')
-    def test_connect_uses_configured_public_url(self, mock_ssh_client):
-        self.client.get('/workers/')
+    def test_connect_auto_creates_worker_key(self, mock_ssh_client):
+        self.key.delete()
 
         connection = mock_ssh_client.return_value
         stdout = MagicMock(); stdout.readline.return_value = 'LAUNCHED\n'
         connection.exec_command.return_value = (MagicMock(), stdout, MagicMock())
 
-        self.client.post('/workers/connect/', {
-            'ssh_target' : 'ssh4.vast.ai:12345',
-            'key_id'     : self.key.id,
-        })
+        with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
+            response = self.client.post('/workers/connect/', {
+                'ssh_target' : 'ssh4.vast.ai:12345',
+            })
+
+        self.assertEqual(response.status_code, 302)
+        auto_key = WorkerKey.objects.get(user=self.user, name='auto')
+        self.assertIn(auto_key.token, connection.exec_command.call_args.args[0])
+
+    def test_connect_without_server_key_errors(self):
+        with override_settings(SSH_PRIVATE_KEY='', SSH_PRIVATE_KEY_FILE='/nonexistent'):
+            response = self.client.post('/workers/connect/', {
+                'ssh_target' : 'ssh4.vast.ai:12345',
+                'key_id'     : self.key.id,
+            }, follow=True)
+        self.assertContains(response, '秘密鍵が設定されていません')
+
+    @override_settings(PUBLIC_URL='https://bench.example.com')
+    @patch('OpenBench.views.paramiko.SSHClient')
+    def test_connect_uses_configured_public_url(self, mock_ssh_client):
+        connection = mock_ssh_client.return_value
+        stdout = MagicMock(); stdout.readline.return_value = 'LAUNCHED\n'
+        connection.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+
+        with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
+            self.client.post('/workers/connect/', {
+                'ssh_target' : 'ssh4.vast.ai:12345',
+                'key_id'     : self.key.id,
+            })
 
         command = connection.exec_command.call_args.args[0]
         self.assertIn('OPENBENCH_SERVER=https://bench.example.com/', command)
 
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_failure_reports_error(self, mock_ssh_client):
-        self.client.get('/workers/')
-
         mock_ssh_client.return_value.connect.side_effect = Exception('Connection refused')
 
-        response = self.client.post('/workers/connect/', {
-            'ssh_target' : 'ssh4.vast.ai:12345',
-            'key_id'     : self.key.id,
-        }, follow=True)
+        with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
+            response = self.client.post('/workers/connect/', {
+                'ssh_target' : 'ssh4.vast.ai:12345',
+                'key_id'     : self.key.id,
+            }, follow=True)
 
         self.assertContains(response, 'SSH connection failed')
-
-    def test_connect_requires_enabled_key(self):
-        self.key.enabled = False
-        self.key.save()
-        response = self.client.post('/workers/connect/', {
-            'ssh_target' : 'ssh4.vast.ai:12345',
-            'key_id'     : self.key.id,
-        }, follow=True)
-        self.assertContains(response, 'Select an enabled Worker Key')

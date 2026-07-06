@@ -90,18 +90,27 @@
         <p>
             インスタンスのSSHアドレス(vast.ai の
             <code>ssh -p 12345 root@ssh4.vast.ai</code> や <code>host:port</code> 形式)を
-            貼り付けると、サーバーがログインして依存関係のインストールからワーカーの
-            起動まで自動で行います。前提として、インスタンスが以下の公開鍵を受け入れる
-            必要があります。vast.ai の <i>Account › SSH Keys</i> に一度登録しておけば、
-            以後の新しいインスタンスには自動で入ります。起動済みのインスタンスには
-            <code>~/.ssh/authorized_keys</code> に追記するか、vast.ai コンソールから
-            アタッチしてください。
+            貼り付けると、サーバーが管理者設定の秘密鍵でログインし、依存関係の
+            インストールからワーカーの起動まで自動で行います。
         </p>
 
-        <pre id="ssh-public-key" style="white-space: pre-wrap; word-break: break-all;">{{ssh_public_key}}</pre>
-        <a class="anchorbutton btn-blue" onclick="copy_text('ssh-public-key', false)">公開鍵をコピー</a>
+        {% if ssh_key_configured %}
+            <p>
+                サーバーのSSH鍵: <code>{{ssh_key_fingerprint}}</code><br>
+                この鍵の公開鍵が vast.ai の <i>Account › SSH Keys</i> に登録されていれば、
+                新しいインスタンスには自動で入ります(あなたが普段SSHに使っている
+                鍵をサーバーに設定した場合は、追加の登録は不要です)。
+            </p>
+        {% else %}
+            <p>
+                <b>サーバーにSSH秘密鍵が設定されていません。</b>
+                管理者が一度だけ次を実行してください
+                (vast.ai に公開鍵を登録済みの、パスフレーズなしの鍵):
+            </p>
+            <pre>fly secrets set OPENBENCH_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"</pre>
+        {% endif %}
 
-        <br><br>
+        <br>
 
         <form method="POST" action="/workers/connect/">
             {% csrf_token %}
@@ -113,7 +122,7 @@
                             placeholder="ssh -p 12345 root@ssh4.vast.ai">
                     </div>
                     <div class="row">
-                        <label for="key_id">ワーカーキー</label>
+                        <label for="key_id" title="ワーカーがこのサーバーに接続する際のAPI認証キー。未選択なら自動で選択・作成されます">ワーカーキー(自動)</label>
                         <select id="key_id" name="key_id">
                             {% for key in keys %}
                                 {% if key.enabled %}
