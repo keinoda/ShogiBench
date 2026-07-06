@@ -205,6 +205,37 @@ class NetworkUploadTests(TestCase):
             body = b''.join(response.streaming_content)
             self.assertEqual(body, aux)
 
+    def test_worker_key_can_download_network(self):
+        content = b'\x0a\x0b' * 10_000
+        key = WorkerKey.objects.create(user=self.user, name='dl', token='d' * 48)
+
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/Stoat/UPLOAD/dlnet.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', content) })
+            network = Network.objects.get(engine='Stoat', name='dlnet.bin')
+
+            # A fresh, unauthenticated client using the worker key as password
+            worker = Client()
+            response = worker.post('/api/networks/Stoat/%s/' % (network.sha256), {
+                'username' : 'alice', 'password' : key.token })
+            body = b''.join(response.streaming_content)
+            self.assertEqual(body, content)
+
+    def test_worker_key_cannot_delete_network(self):
+        key = WorkerKey.objects.create(user=self.user, name='dl2', token='e' * 48)
+
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/Stoat/UPLOAD/keepme.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', b'keep') })
+            network = Network.objects.get(engine='Stoat', name='keepme.bin')
+
+            worker = Client()
+            worker.post('/api/networks/Stoat/%s/delete/' % (network.sha256), {
+                'username' : 'alice', 'password' : key.token })
+            self.assertTrue(Network.objects.filter(id=network.id).exists())
+
     def test_aux_endpoint_without_aux_errors(self):
         with override_settings(MEDIA_ROOT=self.media):
             self.client.post('/networks/Stoat/UPLOAD/noaux.bin/', {

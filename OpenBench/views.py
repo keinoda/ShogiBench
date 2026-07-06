@@ -136,6 +136,38 @@ def authenticate(request, requireEnabled=False):
 
     return user
 
+def authenticate_worker_key(username, token):
+
+    ## Returns the owning User when (username, token) matches an enabled
+    ## Worker Key of an enabled account, else None. Failure reasons are
+    ## printed (never the token itself) so a failing worker can be
+    ## diagnosed from the server logs.
+
+    username = (username or '').strip()
+    token    = (token or '').strip()
+
+    key = WorkerKey.objects.filter(token=token, enabled=True).first()
+
+    if not key:
+        print ('Worker auth failed: no enabled Worker Key matches the token supplied by %r' % (username), flush=True)
+        return None
+
+    # Token must be paired with the username of its owner
+    if key.user.username.lower() != username.lower():
+        print ('Worker auth failed: Key "%s" belongs to "%s", but username %r was supplied'
+               % (key.name, key.user.username, username), flush=True)
+        return None
+
+    # Owner must still be an enabled user
+    if not Profile.objects.filter(user=key.user, enabled=True).exists():
+        print ('Worker auth failed: owner "%s" of Key "%s" is disabled' % (key.user.username, key.name), flush=True)
+        return None
+
+    key.last_used = timezone.now()
+    key.save(update_fields=['last_used'])
+
+    return key.user
+
 def client_authenticate(request):
 
     ## Authentication for the client (worker) endpoints only. Workers may
@@ -147,33 +179,11 @@ def client_authenticate(request):
     except UnableToAuthenticate:
         pass
 
-    ## The reasons below are printed (never the token itself) so that a
-    ## failing worker can be diagnosed from the server logs.
-
-    username = request.POST.get('username', '').strip()
-    token    = request.POST.get('password', '').strip()
-
-    key = WorkerKey.objects.filter(token=token, enabled=True).first()
-
-    if not key:
-        print ('Worker auth failed: no enabled Worker Key matches the token supplied by %r' % (username), flush=True)
+    user = authenticate_worker_key(request.POST.get('username'), request.POST.get('password'))
+    if user is None:
         raise UnableToAuthenticate()
 
-    # Token must be paired with the username of its owner
-    if key.user.username.lower() != username.lower():
-        print ('Worker auth failed: Key "%s" belongs to "%s", but username %r was supplied'
-               % (key.name, key.user.username, username), flush=True)
-        raise UnableToAuthenticate()
-
-    # Owner must still be an enabled user
-    if not Profile.objects.filter(user=key.user, enabled=True).exists():
-        print ('Worker auth failed: owner "%s" of Key "%s" is disabled' % (key.user.username, key.name), flush=True)
-        raise UnableToAuthenticate()
-
-    key.last_used = timezone.now()
-    key.save(update_fields=['last_used'])
-
-    return key.user
+    return user
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                            ADMINISTRATIVE VIEWS                             #
@@ -1186,7 +1196,7 @@ def api_response(data):
     return HttpResponse(json.dumps(data, indent=4), content_type='application/json')
 
 @csrf_exempt
-def api_authenticate(request, require_enabled=False):
+def api_authenticate(request, require_enabled=False, allow_worker_key=False):
 
     try:
 
@@ -1204,6 +1214,12 @@ def api_authenticate(request, require_enabled=False):
         # Request might be made from the command line. Check the headers
         user = django.contrib.auth.authenticate(
             username=request.POST['username'], password=request.POST['password'])
+
+        # Workers download Networks with their Worker Key as the password
+        if user is None and allow_worker_key:
+            return authenticate_worker_key(
+                request.POST['username'], request.POST['password']) is not None
+
         return Profile.objects.get(user=user).enabled
 
     except Exception:
@@ -1252,10 +1268,7 @@ def api_networks(request, engine):
 @csrf_exempt
 def api_network_download(request, engine, identifier):
 
-    if not api_authenticate(request):
-        return api_response({ 'error' : 'API requires authentication for this server' })
-
-    if not api_authenticate(request, require_enabled=True):
+    if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
 
     if (network := Network.objects.filter(engine=engine, sha256=identifier).first()):
@@ -1269,7 +1282,7 @@ def api_network_download(request, engine, identifier):
 @csrf_exempt
 def api_network_download_aux(request, engine, identifier):
 
-    if not api_authenticate(request, require_enabled=True):
+    if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
 
     if not (network := OpenBench.utils.network_disambiguate(engine, identifier)):

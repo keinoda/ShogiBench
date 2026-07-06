@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 42 # Client version to send to the Server
+CLIENT_VERSION   = 43 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -503,39 +503,10 @@ class MatchRunner:
             name    += '-%s' % (network)
 
         # Public engines whose Makefile cannot embed a Network (no EVALFILE
-        # support, eg YaneuraOu) receive it as a runtime option instead, when
-        # the engine config sets build.network_option
-        build_conf = config.workload['test'][branch]['build']
-        net_option = build_conf.get('network_option')
-        net_fname  = build_conf.get('network_filename')
-        if not private and net_option and network and network != 'None':
-
-            if net_fname:
-                # Directory-style engines (YaneuraOu's EvalDir) expect a fixed
-                # file name inside a directory: stage Networks/<sha>-dir/<name>
-                dir_path = os.path.join('Networks', '%s-dir' % (network))
-                os.makedirs(dir_path, exist_ok=True)
-                staged = os.path.join(dir_path, net_fname)
-                if not os.path.exists(staged):
-                    try: os.link(os.path.join('Networks', network), staged)
-                    except OSError: shutil.copyfile(os.path.join('Networks', network), staged)
-                options += ' %s=%s' % (net_option, os.path.join('..', dir_path))
-
-                # Auxiliary file (eg progress.bin) goes next to the Network,
-                # and its path option points into the same directory
-                aux_sha    = config.workload['test'][branch].get('network_aux', '')
-                aux_option = build_conf.get('network_aux_option')
-                aux_fname  = build_conf.get('network_aux_filename')
-                if aux_sha and aux_fname:
-                    staged_aux = os.path.join(dir_path, aux_fname)
-                    if not os.path.exists(staged_aux):
-                        try: os.link(os.path.join('Networks', aux_sha), staged_aux)
-                        except OSError: shutil.copyfile(os.path.join('Networks', aux_sha), staged_aux)
-                    if aux_option:
-                        options += ' %s=%s' % (aux_option, os.path.join('..', staged_aux))
-
-            else:
-                options += ' %s=%s' % (net_option, os.path.join('../Networks', network))
+        # support, eg YaneuraOu) receive it as a runtime option instead.
+        # Engines launched by the match runner run from Engines/, hence '..'
+        for opt_name, opt_value in stage_network_options(config, branch, prefix='..'):
+            options += ' %s=%s' % (opt_name, opt_value)
 
         # Set the SyzygyPath if we have them, and are allowed to use them
         if syzygy != 'DISABLED' and config.syzygy_max:
@@ -1331,6 +1302,53 @@ def safe_create_genfens_opening_book(config, dev_name, dev_network):
             ServerReporter.report_engine_error(config, error.message)
             raise
 
+def stage_network_options(config, branch, prefix=''):
+
+    ## Returns [(option, value)] pairs pointing a public engine at its
+    ## Network files at runtime (build.network_option engines), staging
+    ## directory-style files (build.network_filename) as needed. prefix
+    ## adjusts the paths for the engine's working directory: '' when run
+    ## from the Client root (bench), '..' when run from Engines/ (games).
+
+    test       = config.workload['test'][branch]
+    build_conf = test['build']
+    network    = test['network']
+    private    = test['private']
+    net_option = build_conf.get('network_option')
+    net_fname  = build_conf.get('network_filename')
+
+    if private or not net_option or not network or network == 'None':
+        return []
+
+    if not net_fname:
+        return [(net_option, os.path.join(prefix, 'Networks', network))]
+
+    # Directory-style engines (YaneuraOu's EvalDir) expect a fixed file
+    # name inside a directory: stage Networks/<sha>-dir/<name>
+    dir_path = os.path.join('Networks', '%s-dir' % (network))
+    os.makedirs(dir_path, exist_ok=True)
+    staged = os.path.join(dir_path, net_fname)
+    if not os.path.exists(staged):
+        try: os.link(os.path.join('Networks', network), staged)
+        except OSError: shutil.copyfile(os.path.join('Networks', network), staged)
+
+    pairs = [(net_option, os.path.join(prefix, dir_path))]
+
+    # Auxiliary file (eg progress.bin) goes next to the Network, and its
+    # path option points into the same directory
+    aux_sha    = test.get('network_aux', '')
+    aux_option = build_conf.get('network_aux_option')
+    aux_fname  = build_conf.get('network_aux_filename')
+    if aux_sha and aux_fname:
+        staged_aux = os.path.join(dir_path, aux_fname)
+        if not os.path.exists(staged_aux):
+            try: os.link(os.path.join('Networks', aux_sha), staged_aux)
+            except OSError: shutil.copyfile(os.path.join('Networks', aux_sha), staged_aux)
+        if aux_option:
+            pairs.append((aux_option, os.path.join(prefix, staged_aux)))
+
+    return pairs
+
 def safe_run_benchmarks(config, branch, engine, network):
 
     name       = config.workload['test'][branch]['name']
@@ -1339,10 +1357,14 @@ def safe_run_benchmarks(config, branch, engine, network):
     bench_args = config.workload['test'][branch]['build'].get('bench_args', '')
     binary     = os.path.join('Engines', engine)
 
+    # Engines that take their Network as a runtime option need it for the
+    # bench as well; the bench runs from the Client root (prefix '')
+    usi_options = stage_network_options(config, branch, prefix='')
+
     try:
         print('\nRunning %dx Benchmarks for %s' % (config.threads, name))
         speed, nodes = bench.run_benchmark(
-            binary, network, private, config.threads, 1, expected, bench_args)
+            binary, network, private, config.threads, 1, expected, bench_args, usi_options)
 
     except utils.OpenBenchBadBenchException as error:
         ServerReporter.report_bad_bench(config, error.message)
