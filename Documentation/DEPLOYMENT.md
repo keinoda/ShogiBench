@@ -325,6 +325,12 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
      例: `LS_PROGRESS_COEFF={DIR}/coeff.bin`(coeff.bin も補助ファイルで
      アップロード)。EvalDir 等ワーカーが管理するオプションの上書きは無視
      されます
+   - `{DIR}` は**テスト作成フォームのオプション欄でも**使えます(Dev/Base
+     それぞれ自分のネットの配置先に展開)。eval_options.txt を使わず
+     `Threads=1 Hash=256 LS_BUCKET_MODE=... LS_PROGRESS_COEFF={DIR}/coeff.bin`
+     のようにテスト側で指定する運用も可能です。ただしオプション欄の内容は
+     **対局にのみ**適用され、bench には適用されません(eval_options.txt は
+     両方に適用)
    - 注意: `eval_options.txt` の内容は bench 結果にも影響するため、
      オプションを変えると bench 値も変わります(Bench欄は空欄=照合なしが
      便利です)

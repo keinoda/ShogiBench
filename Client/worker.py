@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 50 # Client version to send to the Server
+CLIENT_VERSION   = 51 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -507,6 +507,16 @@ class MatchRunner:
         # Engines launched by the match runner run from Engines/, hence '..'
         for opt_name, opt_value in stage_network_options(config, branch, prefix='..'):
             options += ' %s=%s' % (opt_name, opt_value)
+
+        # Path-type options in the Test's option field may reference this
+        # branch's network staging directory as {DIR}, whose location is
+        # unknowable when the test is created (eg LS_PROGRESS_COEFF=
+        # {DIR}/coeff.bin, pointing at one of the network's aux files)
+        if '{DIR}' in options:
+            staged_dir = staged_network_dir(config, branch, prefix='..')
+            if not staged_dir:
+                print ('Warning: {DIR} used, but %s has no staged network directory' % (branch))
+            options = options.replace('{DIR}', staged_dir)
 
         # Set the SyzygyPath if we have them, and are allowed to use them
         if syzygy != 'DISABLED' and config.syzygy_max:
@@ -1302,6 +1312,18 @@ def safe_create_genfens_opening_book(config, dev_name, dev_network):
         except utils.OpenBenchFailedGenfensException as error:
             ServerReporter.report_engine_error(config, error.message)
             raise
+
+def staged_network_dir(config, branch, prefix=''):
+
+    ## The directory stage_network_options() stages this branch's Network
+    ## into, or '' when the branch has no directory-style Network
+
+    test = config.workload['test'][branch]
+    if test['private'] or not test['build'].get('network_filename'):
+        return ''
+    if not test['network'] or test['network'] == 'None':
+        return ''
+    return os.path.join(prefix, 'Networks', '%s-dir' % (test['network']))
 
 def stage_network_options(config, branch, prefix=''):
 
