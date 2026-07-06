@@ -30,6 +30,7 @@ urlpatterns = [
     django.urls.path(r'profileConfig/', OpenBench.views.profile_config),
     django.urls.path(r'workers/', OpenBench.views.workers),
     django.urls.path(r'workers/connect/', OpenBench.views.worker_connect),
+    django.urls.path(r'builds/', OpenBench.views.builds),
 
     # Links for viewing test tables
     django.urls.re_path(r'^index(?:/(?P<page>\d+))?/$', OpenBench.views.index),

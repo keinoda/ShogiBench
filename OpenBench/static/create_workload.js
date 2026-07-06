@@ -3,6 +3,10 @@ var config   = JSON.parse(document.getElementById('json-config'  ).textContent);
 var networks = JSON.parse(document.getElementById('json-networks').textContent);
 var repos    = JSON.parse(document.getElementById('json-repos'   ).textContent);
 
+// Static json variants merged with user-defined ones from /builds/
+var build_variants_el = document.getElementById('json-build-variants');
+var build_variants    = build_variants_el ? JSON.parse(build_variants_el.textContent) : {};
+
 function create_network_options(field_id, engine) {
 
     var has_default     = false;
@@ -49,7 +53,9 @@ function create_build_options(field_id, engine) {
         build_options.remove(0);
 
     // Add each Build Variant defined for the engine
-    const variants = (config.engines[engine].build || {}).variants || { 'default' : '' };
+    const variants = build_variants[engine]
+        || (config.engines[engine].build || {}).variants
+        || { 'default' : '' };
     for (const name in variants) {
 
         var opt      = document.createElement('option');

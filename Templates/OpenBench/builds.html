@@ -1,0 +1,92 @@
+{% extends "OpenBench/base.html" %}
+
+{% load static %}
+
+{% block content %}
+
+    <h3>ビルドバリアント</h3>
+
+    <p>
+        ビルドコマンドを貼り付けると、make引数に自動で変換して登録します
+        (<code>make</code> 本体・<code>-j</code>・<code>EXE=</code>・<code>EVALFILE=</code>・
+        <code>CXX=</code> はワーカーが管理するため自動的に除去されます)。
+        登録したバリアントは、テスト作成フォームの「ビルド」ドロップダウンに現れます。
+    </p>
+
+    <p>
+        例(YaneuraOu の任意NNUEアーキテクチャ):<br>
+        <code>make -j8 normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE_HALFKP_512X2_16_32</code>
+    </p>
+
+    <form method="POST" action="/builds/">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+        <div class="form w-100">
+            <div class="col-full">
+                <div class="row">
+                    <label for="engine">エンジン</label>
+                    <select id="engine" name="engine">
+                        {% for engine in config.engines %}
+                            <option value="{{ engine }}">{{ engine }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="row">
+                    <label for="name">バリアント名</label>
+                    <input id="name" type="text" name="name" placeholder="NNUE-halfKP512x2">
+                </div>
+                <div class="row">
+                    <label for="command">ビルドコマンド</label>
+                    <input id="command" type="text" name="command"
+                        placeholder="make -j normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=...">
+                </div>
+                <input type="submit" value="登録" class="anchorbutton btn-blue w-100">
+            </div>
+        </div>
+    </form>
+
+    <br>
+
+    <h3>登録済みバリアント</h3>
+
+    <table class="hoverable wrappable">
+        <tr class="table-header">
+            <th>エンジン</th>
+            <th>名前</th>
+            <th>make引数</th>
+            <th>作成者</th>
+            <th>操作</th>
+        </tr>
+
+        {% for engine, static_variants in statics.items %}
+            {% for name, args in static_variants.items %}
+                <tr>
+                    <td>{{engine}}</td>
+                    <td>{{name}}</td>
+                    <td><code>{{args|default:"(引数なし)"}}</code></td>
+                    <td>組み込み</td>
+                    <td></td>
+                </tr>
+            {% endfor %}
+        {% endfor %}
+
+        {% for variant in variants %}
+            <tr>
+                <td>{{variant.engine}}</td>
+                <td>{{variant.name}}</td>
+                <td><code>{{variant.args}}</code></td>
+                <td>{{variant.author}}</td>
+                <td>
+                    <form method="POST" action="/builds/" style="display: inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="variant_id" value="{{variant.id}}">
+                        <input type="submit" value="削除" class="anchorbutton btn-red"
+                            onclick="return confirm('[{{variant.engine}}] {{variant.name}} を削除しますか?');">
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+    </table>
+
+{% endblock %}

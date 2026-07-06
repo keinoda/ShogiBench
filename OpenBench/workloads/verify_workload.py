@@ -277,10 +277,17 @@ def verify_network(errors, request, field, field_name, engine_field):
 
 def verify_build_variant(errors, request, field, field_name, engine_field):
     try:
-        engine   = request.POST[engine_field]
-        variant  = request.POST.get(field, 'default')
-        variants = OpenBench.config.OPENBENCH_CONFIG['engines'][engine]['build']['variants']
-        assert variant in variants
+        import OpenBench.views
+
+        # A free-form build command overrides the dropdown; check it parses
+        if (custom := request.POST.get(field + '_custom', '').strip()):
+            args, dropped = OpenBench.views.normalize_build_command(custom)
+            assert len(args) <= 512
+            return
+
+        engine  = request.POST[engine_field]
+        variant = request.POST.get(field, 'default')
+        assert variant in OpenBench.views.engine_build_variants(engine)
     except: errors.append('Unknown Build Variant Provided for {0}'.format(field_name))
 
 def verify_test_mode(errors, request, field):

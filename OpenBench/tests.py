@@ -23,8 +23,8 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 
-from OpenBench.models import Profile, SSHCredential, WorkerKey
-from OpenBench.views import parse_ssh_target
+from OpenBench.models import BuildVariant, Profile, SSHCredential, WorkerKey
+from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
 
 class WorkerKeyAuthTests(TestCase):
 
@@ -158,6 +158,85 @@ class WorkerKeyPageTests(TestCase):
         response = self.client.get('/workers/')
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'box1')
+
+class BuildCommandNormalizationTests(TestCase):
+
+    def test_strips_make_and_managed_arguments(self):
+        args, dropped = normalize_build_command(
+            'make -j8 normal COMPILER=clang++ TARGET_CPU=AVX2 '
+            'YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE EXE=out EVALFILE=x.bin')
+        self.assertEqual(args,
+            'normal COMPILER=clang++ TARGET_CPU=AVX2 YANEURAOU_EDITION=YANEURAOU_ENGINE_NNUE')
+        self.assertIn('make', dropped)
+        self.assertIn('-j8', dropped)
+        self.assertIn('EXE=out', dropped)
+        self.assertIn('EVALFILE=x.bin', dropped)
+
+    def test_bare_arguments_pass_through(self):
+        args, dropped = normalize_build_command('normal TARGET_CPU=ZEN3')
+        self.assertEqual(args, 'normal TARGET_CPU=ZEN3')
+        self.assertEqual(dropped, [])
+
+    def test_drops_cxx(self):
+        args, dropped = normalize_build_command('make CXX=g++ EXTRA=1')
+        self.assertEqual(args, 'EXTRA=1')
+
+class BuildVariantPageTests(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user('alice', 'a@example.com', 'account-password')
+        Profile.objects.create(user=self.user, enabled=True)
+        self.client.login(username='alice', password='account-password')
+
+    def test_page_requires_login(self):
+        response = Client().get('/builds/')
+        self.assertEqual(response.status_code, 302)
+
+    def test_create_normalizes_command(self):
+        self.client.post('/builds/', {
+            'action'  : 'create',
+            'engine'  : 'YaneuraOu',
+            'name'    : 'NNUE-custom',
+            'command' : 'make -j normal COMPILER=clang++ YANEURAOU_EDITION=FOO',
+        })
+        variant = BuildVariant.objects.get(engine='YaneuraOu', name='NNUE-custom')
+        self.assertEqual(variant.args, 'normal COMPILER=clang++ YANEURAOU_EDITION=FOO')
+        self.assertEqual(variant.author, 'alice')
+
+        # And it shows up in the merged variant list used by the form
+        self.assertIn('NNUE-custom', engine_build_variants('YaneuraOu'))
+
+    def test_cannot_shadow_predefined_variant(self):
+        response = self.client.post('/builds/', {
+            'action'  : 'create',
+            'engine'  : 'YaneuraOu',
+            'name'    : 'default',
+            'command' : 'make whatever',
+        }, follow=True)
+        self.assertContains(response, 'predefined')
+        self.assertFalse(BuildVariant.objects.filter(name='default').exists())
+
+    def test_delete_requires_ownership(self):
+        other = User.objects.create_user('bob', 'b@example.com', 'password2')
+        Profile.objects.create(user=other, enabled=True)
+        variant = BuildVariant.objects.create(
+            engine='YaneuraOu', name='bobsbuild', args='normal', author='bob')
+
+        self.client.post('/builds/', { 'action' : 'delete', 'variant_id' : variant.id })
+        self.assertTrue(BuildVariant.objects.filter(id=variant.id).exists())
+
+    def test_owner_can_delete(self):
+        variant = BuildVariant.objects.create(
+            engine='YaneuraOu', name='mine', args='normal', author='alice')
+        self.client.post('/builds/', { 'action' : 'delete', 'variant_id' : variant.id })
+        self.assertFalse(BuildVariant.objects.filter(id=variant.id).exists())
+
+    def test_page_renders_static_and_db_variants(self):
+        BuildVariant.objects.create(
+            engine='YaneuraOu', name='mine', args='normal FOO=1', author='alice')
+        response = self.client.get('/builds/')
+        self.assertContains(response, 'mine')
+        self.assertContains(response, 'NNUE-KP256')
 
 class SSHTargetParsingTests(TestCase):
 

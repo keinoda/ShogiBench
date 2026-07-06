@@ -41,11 +41,17 @@ from OpenBench.workloads.verify_workload import verify_workload
 def resolve_build_variant(request, engine_field, variant_field):
 
     # Returns (variant_name, make_arguments) for the requested engine.
-    # Variants were already validated by verify_workload.
+    # A free-form build command in the _custom field takes precedence over
+    # the dropdown; both were already validated by verify_workload.
+
+    custom = request.POST.get(variant_field + '_custom', '').strip()
+    if custom:
+        args, dropped = OpenBench.views.normalize_build_command(custom)
+        return 'custom', args
 
     engine  = request.POST[engine_field]
     variant = request.POST.get(variant_field, 'default')
-    args    = OPENBENCH_CONFIG['engines'][engine]['build']['variants'].get(variant, '')
+    args    = OpenBench.views.engine_build_variants(engine).get(variant, '')
     return variant, args
 
 def create_workload(request, workload_type):
@@ -61,6 +67,12 @@ def create_workload(request, workload_type):
     if request.method == 'GET':
 
         data = { 'networks' : list(Network.objects.all().values()) }
+
+        # Static json variants merged with user-defined ones, per engine
+        data['build_variants'] = {
+            engine : OpenBench.views.engine_build_variants(engine)
+            for engine in OPENBENCH_CONFIG['engines']
+        }
 
         if workload_type == 'TEST':
             data['workload']        = workload_type
