@@ -24,10 +24,13 @@
 #
 # >>> python manage.py invite <username> [--email X] [--password X] [--approver]
 #
-# When no password is given, a random one is generated and printed once.
+# When no password is given, you are prompted to choose one. In
+# non-interactive use a random password is generated and printed once.
 # Users can change their password afterwards on the /profile/ page.
 
+import getpass
 import secrets
+import sys
 
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand, CommandError
@@ -54,13 +57,33 @@ class Command(BaseCommand):
         if User.objects.filter(username=username).exists():
             raise CommandError('User "%s" already exists' % (username))
 
-        password = options['password'] or secrets.token_urlsafe(16)
+        password  = options['password']
+        generated = False
+
+        # Ask for a password when run interactively; only fall back to a
+        # random one when there is no terminal to ask on
+        if not password and sys.stdin.isatty():
+            for attempt in range(3):
+                password = getpass.getpass('Password: ')
+                confirm  = getpass.getpass('Password (again): ')
+                if password and password == confirm:
+                    break
+                self.stderr.write('Passwords did not match (or were empty). Try again.')
+                password = None
+
+            if not password:
+                raise CommandError('No password provided')
+
+        if not password:
+            password  = secrets.token_urlsafe(16)
+            generated = True
 
         user = User.objects.create_user(username, options['email'], password)
         Profile.objects.create(user=user, enabled=True, approver=options['approver'])
 
         self.stdout.write(self.style.SUCCESS('Created user "%s"' % (username)))
         self.stdout.write('Username : %s' % (username))
-        self.stdout.write('Password : %s' % (password))
+        if generated:
+            self.stdout.write('Password : %s (randomly generated)' % (password))
         self.stdout.write('Approver : %s' % (options['approver']))
-        self.stdout.write('The user can change this password at /profile/ after logging in.')
+        self.stdout.write('Passwords can be changed at /profile/, or with "manage.py changepassword <username>".')

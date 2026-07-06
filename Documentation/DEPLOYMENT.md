@@ -103,7 +103,8 @@ Web からの新規登録は `Config/config.json` の
 python manage.py invite <ユーザー名> [--email <メール>] [--password <初期パスワード>] [--approver]
 ```
 
-- パスワード省略時はランダム生成され、一度だけ表示されます
+- パスワード省略時は対話的に入力を求められます(非対話実行時のみランダム生成して一度だけ表示)
+- 忘れた場合は `python manage.py changepassword <ユーザー名>` でリセットできます
 - `--approver` を付けるとテストの承認・ネットワーク管理が可能になります
 - ユーザーは初回ログイン後に `/profile/` でパスワードを変更できます
 - 無効化したい場合は Django admin (`/admin/`) で Profile の `enabled` を外します
