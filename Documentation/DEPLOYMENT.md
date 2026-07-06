@@ -290,9 +290,12 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
 2. **bench**: 既定の `bench` は時間ベース(≈60秒・非決定的)なので、
    engine config の `build.bench_args = "16 1 100000 default nodes"` により
    ノード制限モードで実行します(決定的・約0.3秒、実測で確認済み)。
-   Bench 欄に入れる値は手元で
-   `./YaneuraOu-by-gcc bench 16 1 100000 default nodes` を実行した際の
-   `Nodes searched` の値です(ビルド設定ごとに異なります)
+   **Bench 欄は空欄でかまいません**(空欄=照合なし。NPS計測のための
+   bench 自体は常に実行されます)。ビルド・評価関数の読み込みまで厳密に
+   検証したい場合のみ数値を入れます。値はビルド+評価関数の組ごとに
+   異なり、手元で `./YaneuraOu-by-gcc bench 16 1 100000 default nodes` を
+   実行した際の `Nodes searched`、またはわざと `1` を入れてワーカーの
+   `Wrong Bench: <実際の値>` エラーで知ることができます
 3. **ネットワーク配布**: YaneuraOu は `EvalFile` ではなく `EvalDir`+固定名
    `nn.bin` 方式のため、ワーカーが `Networks/<sha>-dir/nn.bin` を自動で
    用意して `EvalDir` オプションで渡します(`build.network_option` +
