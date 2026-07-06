@@ -4,3 +4,4 @@ requests
 scipy
 whitenoise
 gunicorn
+paramiko

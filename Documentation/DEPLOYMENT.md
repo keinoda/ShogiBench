@@ -119,13 +119,37 @@ python manage.py invite <ユーザー名> [--email <メール>] [--password <初
 2. キー名 (例 `vastai-epyc`) を付けて **Create Worker Key**
 3. 表示されたトークンをコピー(ページに接続用スニペットも表示されます)
 
-トークンは「アカウントのパスワードの代わり」に使う接続専用の鍵です:
+トークンは「アカウントのパスワードの代わり」に使う接続専用の文字列です。
+SSH 鍵のようにインスタンスへ登録する必要はなく、ワーカーのクライアントを
+起動するときに環境変数 `OPENBENCH_PASSWORD` として渡すだけで機能します:
 
 - Web サイトへのログインには使えません(ワーカー用 API 専用)
 - 漏洩したら `/workers/` で Delete / Disable するだけで無効化できます
 - インスタンスごと・テンプレートごとにキーを分けると管理が楽です
 
-### 3-2. vast.ai テンプレートの設定
+### 3-2. UI からの SSH ワンクリック接続(最も簡単)
+
+`/workers/` ページの **Connect an Instance over SSH** に、vast.ai の
+Connect ボタンが表示する SSH アドレス(例 `ssh -p 12345 root@ssh4.vast.ai`、
+`host:port` 形式でも可)を貼り付けて **Connect & Start Worker** を押すと、
+サーバーがインスタンスに SSH で入り、依存パッケージのインストールから
+ワーカーの起動までを自動で行います。
+
+前提はひとつだけ: ページに表示される **ShogiBench の SSH 公開鍵**を
+インスタンスが受け入れること。
+
+- vast.ai の **Account › SSH Keys** に公開鍵を一度登録しておけば、
+  以後に作成するインスタンスすべてに自動で入ります(推奨)
+- すでに起動中のインスタンスには、vast.ai コンソールから鍵をアタッチするか、
+  一度だけ手動 SSH して `~/.ssh/authorized_keys` に追記してください
+
+この鍵ペアはユーザーごとにサーバー側で自動生成され、秘密鍵はサーバーの
+DB から出ません。用途はワーカーのセットアップだけです。
+
+進行状況はインスタンス側の `~/shogibench-worker.log` に記録され、
+成功すれば数十秒〜数分で `/machines/` にマシンが現れます。
+
+### 3-3. vast.ai テンプレートの設定(全自動にしたい場合)
 
 普段使っているテンプレートに次を追加します。
 
@@ -153,7 +177,7 @@ nohup /root/setup_worker.sh > /root/shogibench-worker.log 2>&1 &
 毎回の apt install を省きたい場合は `Deploy/worker/Dockerfile` をビルドして
 Docker Hub に push し、それをテンプレートのイメージに指定してください。
 
-### 3-3. 起動済みインスタンスに手動で追加する場合
+### 3-4. 起動済みインスタンスに手動で追加する場合
 
 SSH して以下を実行するだけです (`/workers/` ページのスニペットをコピペでも可):
 
@@ -173,7 +197,7 @@ curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/work
 | `SHOGIBENCH_REPO_URL` | このリポジトリ | クライアント取得元 |
 | `SHOGIBENCH_REPO_REF` | `shogi` | 取得するブランチ |
 
-### 3-4. 動作確認
+### 3-5. 動作確認
 
 - サーバーの `/machines/` に数十秒以内にマシンが現れます
 - `/workers/` の Last Used が更新されます

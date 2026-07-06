@@ -18,7 +18,9 @@
 #                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-import os, hashlib, datetime, json, secrets, sys, re
+import io, os, hashlib, datetime, json, secrets, shlex, sys, re
+
+import paramiko
 
 import django.http
 import django.shortcuts
@@ -289,6 +291,138 @@ def profile_config(request):
 
     return redirect(request, '/profile/', status=changes)
 
+def get_or_create_ssh_credential(user):
+
+    ## Each user gets one server-side SSH keypair. The public half is shown
+    ## on the /workers/ page for registration with vast.ai (or any provider);
+    ## the private half never leaves the server.
+
+    if (credential := SSHCredential.objects.filter(user=user).first()):
+        return credential
+
+    key = paramiko.RSAKey.generate(3072)
+
+    private_io = io.StringIO()
+    key.write_private_key(private_io)
+    public_key = 'ssh-rsa %s shogibench-%s' % (key.get_base64(), user.username)
+
+    return SSHCredential.objects.create(
+        user=user, private_key=private_io.getvalue(), public_key=public_key)
+
+def parse_ssh_target(text):
+
+    ## Accepts any of the formats vast.ai and users commonly paste:
+    ##   "ssh -p 12345 root@ssh4.vast.ai"    (vast.ai's Connect button)
+    ##   "root@ssh4.vast.ai:12345"
+    ##   "ssh4.vast.ai:12345"
+    ##   "203.0.113.7"                        (port defaults to 22)
+    ## Returns (username, host, port), with username defaulting to root.
+
+    text = text.strip()
+
+    if (m := re.match(r'^ssh\s+(?:-p\s*(\d+)\s+)?(?:([\w.-]+)@)?([\w.-]+)(?:\s+-p\s*(\d+))?$', text)):
+        port = int(m.group(1) or m.group(4) or 22)
+        return (m.group(2) or 'root', m.group(3), port)
+
+    if (m := re.match(r'^(?:([\w.-]+)@)?([\w.-]+)(?::(\d+))?$', text)):
+        return (m.group(1) or 'root', m.group(2), int(m.group(3) or 22))
+
+    raise ValueError('Unrecognized SSH target: %s' % (text))
+
+def launch_worker_over_ssh(request, credential, worker_key, target, threads):
+
+    ## Connect to the instance with the stored keypair, upload the bootstrap
+    ## script over SFTP, and launch it detached with the connection settings
+    ## for this server baked in. Returns a status string, or raises.
+
+    user, host, port = parse_ssh_target(target)
+
+    pkey   = paramiko.RSAKey.from_private_key(io.StringIO(credential.private_key))
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        client.connect(
+            host, port=port, username=user, pkey=pkey,
+            timeout=15, look_for_keys=False, allow_agent=False)
+
+        # Upload our own copy of the bootstrap script, so nothing external is needed
+        script = os.path.join(PROJECT_PATH, 'Deploy', 'worker', 'setup_worker.sh')
+        with open(script, 'rb') as fin:
+            with client.open_sftp() as sftp:
+                sftp.putfo(io.BytesIO(fin.read()), '/tmp/shogibench_setup.sh')
+
+        exports = {
+            'OPENBENCH_SERVER'    : request.build_absolute_uri('/'),
+            'OPENBENCH_USERNAME'  : worker_key.user.username,
+            'OPENBENCH_PASSWORD'  : worker_key.token,
+            'SHOGIBENCH_REPO_URL' : OPENBENCH_CONFIG['client_repo_url'],
+            'SHOGIBENCH_REPO_REF' : OPENBENCH_CONFIG['client_repo_ref'],
+        }
+
+        if threads:
+            exports['SHOGIBENCH_THREADS'] = str(int(threads))
+
+        env_line = ' '.join('%s=%s' % (k, shlex.quote(v)) for k, v in exports.items())
+
+        command = (
+            'chmod +x /tmp/shogibench_setup.sh && '
+            'export %s && '
+            'nohup /tmp/shogibench_setup.sh > "$HOME/shogibench-worker.log" 2>&1 '
+            '< /dev/null & sleep 1 && echo LAUNCHED'
+        ) % (env_line)
+
+        stdin, stdout, stderr = client.exec_command(command, timeout=30)
+        output = stdout.read().decode('utf-8', 'replace')
+
+        if 'LAUNCHED' not in output:
+            error = stderr.read().decode('utf-8', 'replace').strip()
+            raise Exception(error or 'Bootstrap did not start')
+
+        return 'Launched worker on %s:%d as %s. Logs: ~/shogibench-worker.log' % (host, port, user)
+
+    finally:
+        client.close()
+
+def worker_connect(request):
+
+    ## POST handler for the "Connect over SSH" form on the /workers/ page.
+
+    if not request.user.is_authenticated:
+        return redirect(request, '/login/')
+
+    profile = Profile.objects.filter(user=request.user).first()
+    if not profile or not profile.enabled:
+        return redirect(request, '/index/', error='Only enabled users can connect Workers')
+
+    if request.method != 'POST':
+        return redirect(request, '/workers/')
+
+    worker_key = WorkerKey.objects.filter(
+        user=request.user, id=request.POST.get('key_id', 0), enabled=True).first()
+
+    if not worker_key:
+        return redirect(request, '/workers/', error='Select an enabled Worker Key')
+
+    if not (target := request.POST.get('ssh_target', '').strip()):
+        return redirect(request, '/workers/', error='Provide the instance\'s SSH host and port')
+
+    credential = get_or_create_ssh_credential(request.user)
+
+    try:
+        status = launch_worker_over_ssh(
+            request, credential, worker_key, target, request.POST.get('threads', '').strip())
+        return redirect(request, '/workers/', status=status)
+
+    except ValueError as error:
+        return redirect(request, '/workers/', error=str(error))
+
+    except Exception as error:
+        message = 'SSH connection failed: %s\n' % (error)
+        message += 'Check that the public key below is authorized on the instance,'
+        message += ' and that the host and port are correct.'
+        return redirect(request, '/workers/', error=message)
+
 def workers(request):
 
     ## Manage Worker Keys, which are dedicated credentials for connecting
@@ -330,6 +464,7 @@ def workers(request):
     data = {
         'keys'       : WorkerKey.objects.filter(user=request.user).order_by('-id'),
         'server_url' : request.build_absolute_uri('/'),
+        'ssh_public_key' : get_or_create_ssh_credential(request.user).public_key,
     }
 
     return render(request, 'workers.html', data)
