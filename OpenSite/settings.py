@@ -47,6 +47,13 @@ if not DEBUG:
     SESSION_COOKIE_SECURE   = True
     CSRF_COOKIE_SECURE      = True
 
+# Public base URL of this server, embedded into worker connection snippets
+# and SSH bootstraps. Must be the https:// URL workers should talk to; an
+# http:// URL would get redirected and break the client's POST requests.
+# Defaults to the first CSRF trusted origin.
+PUBLIC_URL = os.environ.get(
+    'OPENBENCH_PUBLIC_URL', CSRF_TRUSTED_ORIGINS[0] if CSRF_TRUSTED_ORIGINS else None)
+
 # Writable directory for the SQLite database and /Media/ uploads. Point
 # this at a persistent volume when deploying to a PaaS with ephemeral disks.
 DATA_DIR = os.environ.get('OPENBENCH_DATA_DIR', BASE_DIR)

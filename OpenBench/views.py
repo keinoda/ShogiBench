@@ -300,6 +300,17 @@ def profile_config(request):
 
     return redirect(request, '/profile/', status=changes)
 
+def server_public_url(request):
+
+    ## The URL workers must use to reach this server. Behind some proxies
+    ## build_absolute_uri() reports http://, which gets 301-redirected and
+    ## silently turns the client's POSTs into GETs — so prefer the configured
+    ## public URL and only fall back to the request's own view of itself.
+
+    from django.conf import settings
+    url = getattr(settings, 'PUBLIC_URL', None) or request.build_absolute_uri('/')
+    return url if url.endswith('/') else url + '/'
+
 def get_or_create_ssh_credential(user):
 
     ## Each user gets one server-side SSH keypair. The public half is shown
@@ -362,7 +373,7 @@ def launch_worker_over_ssh(request, credential, worker_key, target, threads):
                 sftp.putfo(io.BytesIO(fin.read()), '/tmp/shogibench_setup.sh')
 
         exports = {
-            'OPENBENCH_SERVER'    : request.build_absolute_uri('/'),
+            'OPENBENCH_SERVER'    : server_public_url(request),
             'OPENBENCH_USERNAME'  : worker_key.user.username,
             'OPENBENCH_PASSWORD'  : worker_key.token,
             'SHOGIBENCH_REPO_URL' : OPENBENCH_CONFIG['client_repo_url'],
@@ -479,7 +490,7 @@ def workers(request):
 
     data = {
         'keys'       : WorkerKey.objects.filter(user=request.user).order_by('-id'),
-        'server_url' : request.build_absolute_uri('/'),
+        'server_url' : server_public_url(request),
         'ssh_public_key' : get_or_create_ssh_credential(request.user).public_key,
     }
 
