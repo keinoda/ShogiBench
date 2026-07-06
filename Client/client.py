@@ -123,6 +123,9 @@ def download_client_files(args):
     except:
         raise Exception('Unable to retrieve Client Version from OpenBench server')
 
+    if 'error' in version_ref:
+        raise Exception('Server error: %s' % version_ref['error'])
+
     try: # Download the entire .zip for the branch / tag / commit ref
         repo_url = version_ref['client_repo_url']
         repo_ref = version_ref['client_repo_ref']
