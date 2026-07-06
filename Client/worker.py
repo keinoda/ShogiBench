@@ -1347,7 +1347,7 @@ def run_and_parse_runner(config, command, runner_idx, results_queue, abort_flag)
     while True:
 
         # Read each line of output until the pipe closes and we get "" back
-        line = runner.stdout.readline().strip().decode('ascii')
+        line = runner.stdout.readline().strip().decode('utf-8', 'replace')
         if not line:
             break
 
