@@ -50,6 +50,7 @@ command -v g++     >/dev/null || PKGS="$PKGS g++"
 command -v python3 >/dev/null || PKGS="$PKGS python3"
 command -v pip3    >/dev/null || PKGS="$PKGS python3-pip"
 command -v pgrep   >/dev/null || PKGS="$PKGS procps"
+command -v python  >/dev/null || PKGS="$PKGS python-is-python3"
 
 if [ -n "$PKGS" ]; then
     $SUDO apt-get update -y

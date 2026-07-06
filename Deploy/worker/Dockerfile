@@ -11,7 +11,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git make clang g++ python3 python3-pip procps \
+        ca-certificates curl git make clang g++ python3 python3-pip python-is-python3 procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Rust toolchain for building the shogitest match runner
