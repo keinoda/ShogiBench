@@ -319,7 +319,7 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
 ```sh
 nohup curl -sS -X POST https://<あなたのサーバー>/scripts/ \
   -F action=UPLOAD_NETWORK \
-  -F engine=YaneuraOu-keinoda \
+  -F engine=YaneuraOu-nagisa \
   -F name=mynet.bin \
   -F username=<ユーザー名> -F password=<アカウントのパスワード> \
   -F netfile=@/path/to/nn.bin > upload.log 2>&1 &

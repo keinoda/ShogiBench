@@ -178,10 +178,10 @@ class NetworkUploadTests(TestCase):
         expected = hashlib.sha256(content).hexdigest()[:8].upper()
 
         with override_settings(MEDIA_ROOT=self.media):
-            response = self.client.post('/networks/YaneuraOu-keinoda/UPLOAD/mynet.bin/', {
+            response = self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/mynet.bin/', {
                 'netfile' : SimpleUploadedFile('mynet.bin', content) })
 
-        network = Network.objects.filter(engine='YaneuraOu-keinoda', name='mynet.bin').first()
+        network = Network.objects.filter(engine='YaneuraOu-nagisa', name='mynet.bin').first()
         self.assertIsNotNone(network)
         self.assertEqual(network.sha256, expected)
 
@@ -192,16 +192,16 @@ class NetworkUploadTests(TestCase):
 
         with override_settings(MEDIA_ROOT=self.media), \
              patch('OpenBench.utils.MEDIA_ROOT', self.media):
-            self.client.post('/networks/YaneuraOu-keinoda/UPLOAD/withaux.bin/', {
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/withaux.bin/', {
                 'netfile' : SimpleUploadedFile('nn.bin', content),
                 'auxfile' : SimpleUploadedFile('progress.bin', aux) })
 
-            network = Network.objects.filter(engine='YaneuraOu-keinoda', name='withaux.bin').first()
+            network = Network.objects.filter(engine='YaneuraOu-nagisa', name='withaux.bin').first()
             self.assertIsNotNone(network)
             self.assertEqual(network.aux_sha256, aux_sha)
 
             # The aux file is retrievable through the api endpoint
-            response = self.client.post('/api/networks/YaneuraOu-keinoda/%s/aux/' % (network.sha256))
+            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/' % (network.sha256))
             body = b''.join(response.streaming_content)
             self.assertEqual(body, aux)
 
@@ -211,13 +211,13 @@ class NetworkUploadTests(TestCase):
 
         with override_settings(MEDIA_ROOT=self.media), \
              patch('OpenBench.utils.MEDIA_ROOT', self.media):
-            self.client.post('/networks/YaneuraOu-keinoda/UPLOAD/dlnet.bin/', {
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/dlnet.bin/', {
                 'netfile' : SimpleUploadedFile('nn.bin', content) })
-            network = Network.objects.get(engine='YaneuraOu-keinoda', name='dlnet.bin')
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='dlnet.bin')
 
             # A fresh, unauthenticated client using the worker key as password
             worker = Client()
-            response = worker.post('/api/networks/YaneuraOu-keinoda/%s/' % (network.sha256), {
+            response = worker.post('/api/networks/YaneuraOu-nagisa/%s/' % (network.sha256), {
                 'username' : 'alice', 'password' : key.token })
             body = b''.join(response.streaming_content)
             self.assertEqual(body, content)
@@ -227,21 +227,21 @@ class NetworkUploadTests(TestCase):
 
         with override_settings(MEDIA_ROOT=self.media), \
              patch('OpenBench.utils.MEDIA_ROOT', self.media):
-            self.client.post('/networks/YaneuraOu-keinoda/UPLOAD/keepme.bin/', {
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/keepme.bin/', {
                 'netfile' : SimpleUploadedFile('nn.bin', b'keep') })
-            network = Network.objects.get(engine='YaneuraOu-keinoda', name='keepme.bin')
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='keepme.bin')
 
             worker = Client()
-            worker.post('/api/networks/YaneuraOu-keinoda/%s/delete/' % (network.sha256), {
+            worker.post('/api/networks/YaneuraOu-nagisa/%s/delete/' % (network.sha256), {
                 'username' : 'alice', 'password' : key.token })
             self.assertTrue(Network.objects.filter(id=network.id).exists())
 
     def test_aux_endpoint_without_aux_errors(self):
         with override_settings(MEDIA_ROOT=self.media):
-            self.client.post('/networks/YaneuraOu-keinoda/UPLOAD/noaux.bin/', {
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/noaux.bin/', {
                 'netfile' : SimpleUploadedFile('nn.bin', b'plain') })
-            network = Network.objects.get(engine='YaneuraOu-keinoda', name='noaux.bin')
-            response = self.client.post('/api/networks/YaneuraOu-keinoda/%s/aux/' % (network.sha256))
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='noaux.bin')
+            response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/' % (network.sha256))
             self.assertIn('error', response.json())
 
     def test_upload_requires_approver(self):
@@ -251,7 +251,7 @@ class NetworkUploadTests(TestCase):
         client.login(username='bob', password='password2')
 
         with override_settings(MEDIA_ROOT=self.media):
-            client.post('/networks/YaneuraOu-keinoda/UPLOAD/theirs.bin/', {
+            client.post('/networks/YaneuraOu-nagisa/UPLOAD/theirs.bin/', {
                 'netfile' : SimpleUploadedFile('theirs.bin', b'data') })
 
         self.assertFalse(Network.objects.filter(name='theirs.bin').exists())
@@ -355,21 +355,21 @@ class BuildVariantPageTests(TestCase):
     def test_create_normalizes_command(self):
         self.client.post('/builds/', {
             'action'  : 'create',
-            'engine'  : 'YaneuraOu-keinoda',
+            'engine'  : 'YaneuraOu-nagisa',
             'name'    : 'NNUE-custom',
             'command' : 'make -j normal COMPILER=clang++ YANEURAOU_EDITION=FOO',
         })
-        variant = BuildVariant.objects.get(engine='YaneuraOu-keinoda', name='NNUE-custom')
+        variant = BuildVariant.objects.get(engine='YaneuraOu-nagisa', name='NNUE-custom')
         self.assertEqual(variant.args, 'normal COMPILER=clang++ YANEURAOU_EDITION=FOO')
         self.assertEqual(variant.author, 'alice')
 
         # And it shows up in the merged variant list used by the form
-        self.assertIn('NNUE-custom', engine_build_variants('YaneuraOu-keinoda'))
+        self.assertIn('NNUE-custom', engine_build_variants('YaneuraOu-nagisa'))
 
     def test_cannot_shadow_predefined_variant(self):
         response = self.client.post('/builds/', {
             'action'  : 'create',
-            'engine'  : 'YaneuraOu-keinoda',
+            'engine'  : 'YaneuraOu-nagisa',
             'name'    : 'default',
             'command' : 'make whatever',
         }, follow=True)
@@ -380,20 +380,20 @@ class BuildVariantPageTests(TestCase):
         other = User.objects.create_user('bob', 'b@example.com', 'password2')
         Profile.objects.create(user=other, enabled=True)
         variant = BuildVariant.objects.create(
-            engine='YaneuraOu-keinoda', name='bobsbuild', args='normal', author='bob')
+            engine='YaneuraOu-nagisa', name='bobsbuild', args='normal', author='bob')
 
         self.client.post('/builds/', { 'action' : 'delete', 'variant_id' : variant.id })
         self.assertTrue(BuildVariant.objects.filter(id=variant.id).exists())
 
     def test_owner_can_delete(self):
         variant = BuildVariant.objects.create(
-            engine='YaneuraOu-keinoda', name='mine', args='normal', author='alice')
+            engine='YaneuraOu-nagisa', name='mine', args='normal', author='alice')
         self.client.post('/builds/', { 'action' : 'delete', 'variant_id' : variant.id })
         self.assertFalse(BuildVariant.objects.filter(id=variant.id).exists())
 
     def test_page_renders_static_and_db_variants(self):
         BuildVariant.objects.create(
-            engine='YaneuraOu-keinoda', name='mine', args='normal FOO=1', author='alice')
+            engine='YaneuraOu-nagisa', name='mine', args='normal FOO=1', author='alice')
         response = self.client.get('/builds/')
         self.assertContains(response, 'mine')
         self.assertContains(response, 'NNUE-KP256')
