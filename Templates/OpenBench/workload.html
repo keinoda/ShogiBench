@@ -14,52 +14,58 @@
     <div id="config" style="display: block; overflow-x: auto;">
         <table class="test-config left-align wrappable" style="table-layout: auto; width: 100%;">
 
-            <tr><td class="td-label">Author</td><td>{{workload.author|capfirst}}</td></tr>
-            <tr><td class="td-label">Creation</td><td class="timestamp">{{workload.creation|date:'U'}}</td></tr>
+            <tr><td class="td-label">作成者</td><td>{{workload.author|capfirst}}</td></tr>
+            <tr><td class="td-label">作成日時</td><td class="timestamp">{{workload.creation|date:'U'}}</td></tr>
 
             <!-- All of the Dev Engine ( or Sole Engine ) information -->
-            <tr><td class="td-label">{{dev_text}} Source</td><td><a href="{{workload.dev_repo}}">{{workload.dev_repo}}</a></td></tr>
+            <tr><td class="td-label">{{dev_text}} ソース</td><td><a href="{{workload.dev_repo}}">{{workload.dev_repo}}</a></td></tr>
             <tr><td class="td-label">{{dev_text}} Sha</td><td>{{workload.dev.sha}}</td></tr>
-            <tr><td class="td-label">{{dev_text}} Branch</td><td class="branch_name">{{workload.dev.name|prettyName}}</td></tr>
+            <tr><td class="td-label">{{dev_text}} ブランチ</td><td class="branch_name">{{workload.dev.name|prettyName}}</td></tr>
             <tr><td class="td-label">{{dev_text}} Bench</td><td>{{workload.dev.bench}}</td></tr>
-            <tr><td class="td-label">{{dev_text}} Network</td><td><a href="{{workload|network_download_link:'dev'}}">{{workload.dev_netname}}</td></tr>
-            <tr><td class="td-label">{{dev_text}} Options</td><td class="engine-options">{{workload.dev_options}}</td></tr>
-            <tr><td class="td-label">{{dev_text}} Time</td><td>{{workload.dev_time_control}}</td></tr>
+            <tr><td class="td-label">{{dev_text}} ネットワーク</td><td><a href="{{workload|network_download_link:'dev'}}">{{workload.dev_netname}}</td></tr>
+            {% if workload.dev_build_name and workload.dev_build_name != 'default' %}
+                <tr><td class="td-label">{{dev_text}} ビルド</td><td>{{workload.dev_build_name}} <span class="engine-options">({{workload.dev_build_args}})</span></td></tr>
+            {% endif %}
+            <tr><td class="td-label">{{dev_text}} オプション</td><td class="engine-options">{{workload.dev_options}}</td></tr>
+            <tr><td class="td-label">{{dev_text}} 持ち時間</td><td>{{workload.dev_time_control}}</td></tr>
 
             <!-- All of the Base Engine information, which only exists for TESTs -->
             {% if type == "TEST" or type == "DATAGEN" %}
-                <tr><td class="td-label">Base Source</td><td><a href="{{workload.base_repo}}">{{workload.base_repo}}</a></td></tr>
+                <tr><td class="td-label">Base ソース</td><td><a href="{{workload.base_repo}}">{{workload.base_repo}}</a></td></tr>
                 <tr><td class="td-label">Base Sha</td><td>{{workload.base.sha}}</td></tr>
-                <tr><td class="td-label">Base Branch</td><td class="branch_name">{{workload.base.name|prettyName}}</td></tr>
+                <tr><td class="td-label">Base ブランチ</td><td class="branch_name">{{workload.base.name|prettyName}}</td></tr>
                 <tr><td class="td-label">Base Bench</td><td>{{workload.base.bench}}</td></tr>
-                <tr><td class="td-label">Base Network</td><td><a href="{{workload|network_download_link:'base'}}">{{workload.base_netname}}</td></tr>
-                <tr><td class="td-label">Base Options</td><td class="engine-options">{{workload.base_options}}</td></tr>
-                <tr><td class="td-label">Base Time</td><td>{{workload.base_time_control}}</td></tr>
+                <tr><td class="td-label">Base ネットワーク</td><td><a href="{{workload|network_download_link:'base'}}">{{workload.base_netname}}</td></tr>
+                {% if workload.base_build_name and workload.base_build_name != 'default' %}
+                    <tr><td class="td-label">Base ビルド</td><td>{{workload.base_build_name}} <span class="engine-options">({{workload.base_build_args}})</span></td></tr>
+                {% endif %}
+                <tr><td class="td-label">Base オプション</td><td class="engine-options">{{workload.base_options}}</td></tr>
+                <tr><td class="td-label">Base 持ち時間</td><td>{{workload.base_time_control}}</td></tr>
             {% endif %}
 
             {% if workload|book_download_link %}
-                <tr><td class="td-label">Opening Book</td><td><a href="{{workload|book_download_link}}">{{workload.book_name}}</a></td></tr>
+                <tr><td class="td-label">開始局面集</td><td><a href="{{workload|book_download_link}}">{{workload.book_name}}</a></td></tr>
             {% else %}
-                <tr><td class="td-label">Opening Book</td><td><a>{{workload.book_name}}</a></td></tr>
+                <tr><td class="td-label">開始局面集</td><td><a>{{workload.book_name}}</a></td></tr>
             {% endif %}
 
-            <tr><td class="td-label">Upload PGNs</td><td>{{workload.upload_pgns}}</td></tr>
+            <tr><td class="td-label">棋譜保存</td><td>{{workload.upload_pgns}}</td></tr>
             <tr><td class="td-label">Syzygy WDL</td><td>{{workload.syzygy_wdl}}</td></tr>
-            <tr><td class="td-label">Syzygy ADJ.</td><td>{{workload.syzygy_adj}}</td></tr>
-            <tr><td class="td-label">Win ADJ.</td><td>{{workload.win_adj}}</td></tr>
-            <tr><td class="td-label">Draw ADJ.</td><td>{{workload.draw_adj}}</td></tr>
-            <tr><td class="td-label">Scaling</td><td>{{workload.scale_method}} {{workload.scale_nps}} NPS</td></tr>
+            <tr><td class="td-label">Syzygy 判定</td><td>{{workload.syzygy_adj}}</td></tr>
+            <tr><td class="td-label">勝ち判定</td><td>{{workload.win_adj}}</td></tr>
+            <tr><td class="td-label">引き分け判定</td><td>{{workload.draw_adj}}</td></tr>
+            <tr><td class="td-label">スケーリング</td><td>{{workload.scale_method}} {{workload.scale_nps}} NPS</td></tr>
 
             {% if type == "TUNE" %}
                 <tr><td class="td-label">Alpha</td><td>{{workload.spsa.Alpha}}</td></tr>
                 <tr><td class="td-label">Gamma</td><td>{{workload.spsa.Gamma}}</td></tr>
                 <tr><td class="td-label">A-Ratio</td><td>{{workload.spsa.A_ratio}}</td></tr>
-                <tr><td class="td-label">Reporting</td><td>{{workload.spsa.reporting_type}}</td></tr>
-                <tr><td class="td-label">Distribution</td><td>{{workload.spsa.distribution_type}}</td></tr>
-                <tr><td class="td-label">Pairs Per Point</td><td>{{workload.workload_size}}</td></tr>
+                <tr><td class="td-label">レポート方式</td><td>{{workload.spsa.reporting_type}}</td></tr>
+                <tr><td class="td-label">分布</td><td>{{workload.spsa.distribution_type}}</td></tr>
+                <tr><td class="td-label">ペア数/点</td><td>{{workload.workload_size}}</td></tr>
             {% elif type == "DATAGEN" %}
-                <tr><td class="td-label">Genfens Args</td><td>{{workload.genfens_args}}</td></tr>
-                <tr><td class="td-label">Play Reverses</td><td>{{workload.play_reverses}}</td></tr>
+                <tr><td class="td-label">Genfens 引数</td><td>{{workload.genfens_args}}</td></tr>
+                <tr><td class="td-label">先後反転</td><td>{{workload.play_reverses}}</td></tr>
             {% endif %}
 
         </table>
@@ -69,48 +75,53 @@
 
         <!-- Dev vs Base [Git Diff Link] -->
         <h4><a href="{{workload|gitDiffLink}}">{{workload|git_diff_text}}</a></h4>
+        {% if type == "TEST" or type == "DATAGEN" %}
+            <p style="font-size: small; color: var(--color-font2); margin-top: 0;">
+                成績は Dev(変更側)基準です。W / Elo が正なら Dev の勝ち越しを意味します。
+            </p>
+        {% endif %}
 
         <div class="anchor-container">
 
             <!-- Approve Button: For Admins, or Cross-approvers -->
             {% if not workload.approved and profile.approver and profile.user.username != workload.author %}
-                <a class="anchorbutton btn-blue" href="/{{type|lower}}/{{workload.id}}/APPROVE">Approve</a>
+                <a class="anchorbutton btn-blue" href="/{{type|lower}}/{{workload.id}}/APPROVE">承認</a>
             {% elif not workload.approved and request.user.is_superuser %}
-                <a class="anchorbutton btn-blue" href="/{{type|lower}}/{{workload.id}}/APPROVE">Approve</a>
+                <a class="anchorbutton btn-blue" href="/{{type|lower}}/{{workload.id}}/APPROVE">承認</a>
             {% else %}
-                <a class="anchorbutton btn-disabled">Approve</a>
+                <a class="anchorbutton btn-disabled">承認</a>
             {% endif %}
 
             <!-- Restart Button: For Approvers or Workload Authors of finished workloads -->
             {% if workload.finished and not workload.passed and not workload.failed and profile.approver %}
-                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/RESTART">Restart</a>
+                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/RESTART">再開</a>
             {% elif workload.finished and not workload.passed and not workload.failed and profile.user.username == workload.author %}
-                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/RESTART">Restart</a>
+                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/RESTART">再開</a>
             {% elif workload.finished %}
-                <a class="anchorbutton btn-disabled">Restart</a>
+                <a class="anchorbutton btn-disabled">再開</a>
             {% endif %}
 
             <!-- Stop Button: For Approvers or Workload Authors of active workloads -->
             {% if not workload.finished and profile.approver %}
-                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/STOP">Stop</a>
+                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/STOP">停止</a>
             {% elif not workload.finished and profile.user.username == workload.author %}
-                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/STOP">Stop</a>
+                <a class="anchorbutton btn-yellow" href="/{{type|lower}}/{{workload.id}}/STOP">停止</a>
             {% elif not workload.finished %}
-                <a class="anchorbutton btn-disabled">Stop</a>
+                <a class="anchorbutton btn-disabled">停止</a>
             {% endif %}
 
             <!-- Delete/Restore Button: For Approvers or Workload Authors -->
             {% if profile.approver or profile.user.username == workload.author %}
                 {% if workload.deleted %}
-                    <a class="anchorbutton btn-preset" href="/{{type|lower}}/{{workload.id}}/RESTORE">Restore</a>
+                    <a class="anchorbutton btn-preset" href="/{{type|lower}}/{{workload.id}}/RESTORE">復元</a>
                 {% else %}
-                    <a class="anchorbutton btn-red" href="/{{type|lower}}/{{workload.id}}/DELETE">Delete</a>
+                    <a class="anchorbutton btn-red" href="/{{type|lower}}/{{workload.id}}/DELETE">削除</a>
                 {% endif %}
             {% else %}
                 {% if workload.deleted %}
-                    <a class="anchorbutton btn-disabled">Restore</a>
+                    <a class="anchorbutton btn-disabled">復元</a>
                 {% else %}
-                    <a class="anchorbutton btn-disabled">Delete</a>
+                    <a class="anchorbutton btn-disabled">削除</a>
                 {% endif %}
             {% endif %}
         </div>
@@ -118,14 +129,14 @@
         <!-- Copy Button: Copy the current results statblock -->
         {% if type == "TEST" or type == "DATAGEN" %}
             <div class="anchor-container">
-                <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('long-statblock', true)">Copy Stat Block</a>
+                <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('long-statblock', true)">成績をコピー</a>
             </div>
         {% endif %}
 
         <!-- PGN Download Button -->
         {% if workload.upload_pgns != "FALSE" %}
             <div class="anchor-container">
-                <a class="mt-1 anchorbutton btn-blue" href="/api/pgns/{{workload.id}}/">Download PGN Archive</a>
+                <a class="mt-1 anchorbutton btn-blue" href="/api/pgns/{{workload.id}}/">棋譜アーカイブをダウンロード</a>
             </div>
         {% endif %}
 
@@ -161,27 +172,27 @@
                 <div class="col-full">
 
                     <div class="row">
-                        <label for="priority">Priority</label>
+                        <label for="priority">優先度</label>
                         <input value="{{workload.priority}}" id="priority" name="priority">
                     </div>
 
                     <div class="row">
-                        <label for="throughput">Throughput</label>
+                        <label for="throughput">スループット</label>
                         <input value="{{workload.throughput}}" id="throughput" name="throughput">
                     </div>
 
                     {% if type == "TEST" or type == "DATAGEN" %}
                         <div class="row">
-                            <label for="workload_size">Workload Size</label>
+                            <label for="workload_size">割当サイズ</label>
                             <input value="{{workload.workload_size}}" id="workload_size" name="workload_size">
                         </div>
                     {% endif %}
 
                     <!-- Edit Button: For Approvers or Test Authors -->
                     {% if profile.approver or profile.user.username == workload.author %}
-                        <input class="anchorbutton btn-blue w-100" type="submit" name="submit" value="Modify">
+                        <input class="anchorbutton btn-blue w-100" type="submit" name="submit" value="更新">
                     {% else %}
-                        <input class="anchorbutton btn-disabled w-100" type="submit" name="submit" value="Modify">
+                        <input class="anchorbutton btn-disabled w-100" type="submit" name="submit" value="更新">
                     {% endif %}
                 </div>
             </div>
@@ -218,14 +229,14 @@
         <table class="stripes wrappable">
             <tr class="table-header">
                 <th>#</th>
-                <th>User</th>
-                <th>Updated</th>
-                <th style="width: 45px">Games</th>
-                <th style="width: 45px">Won</th>
-                <th style="width: 45px">Lost</th>
-                <th style="width: 45px">Drawn</th>
-                <th style="width: 45px">Time</th>
-                <th style="width: 45px">Crash</th>
+                <th>ユーザー</th>
+                <th>更新</th>
+                <th style="width: 45px" title="このマシンの対局数">対局</th>
+                <th style="width: 45px" title="Dev側の勝ち">勝</th>
+                <th style="width: 45px" title="Dev側の負け">負</th>
+                <th style="width: 45px">分</th>
+                <th style="width: 45px" title="時間切れ">切れ</th>
+                <th style="width: 45px" title="クラッシュ">落ち</th>
             </tr>
 
             {% for result in results %}
