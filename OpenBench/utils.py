@@ -391,6 +391,53 @@ def network_download(request, engine, network):
     response['Content-Disposition'] = 'attachment; filename=' + network.sha256
     return response
 
+def network_aux_add(request, engine, network):
+
+    edit_url = '/networks/%s/EDIT/%s/' % (engine, network.sha256)
+
+    added = []
+    for auxfile in request.FILES.getlist('auxfiles'):
+
+        aux_name = os.path.basename(auxfile.name)[:64]
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', aux_name):
+            return OpenBench.views.redirect(request, edit_url, error='Aux filenames may only use [a-zA-Z0-9_.-]')
+
+        if network.aux_files.filter(name=aux_name).exists():
+            return OpenBench.views.redirect(request, edit_url, error='%s already exists for this Network' % (aux_name))
+
+        sha = hashlib.sha256()
+        for chunk in auxfile.chunks():
+            sha.update(chunk)
+        aux_sha = sha.hexdigest()[:8].upper()
+
+        if not os.path.exists(os.path.join(MEDIA_ROOT, aux_sha)):
+            FileSystemStorage().save('%s' % (aux_sha), auxfile)
+
+        NetworkAuxFile.objects.create(network=network, name=aux_name, sha256=aux_sha)
+        added.append(aux_name)
+
+    if not added:
+        return OpenBench.views.redirect(request, edit_url, error='No auxiliary files were provided')
+
+    return OpenBench.views.redirect(request, edit_url, status='Added %s' % (', '.join(added)))
+
+def network_aux_delete(request, engine, network):
+
+    edit_url = '/networks/%s/EDIT/%s/' % (engine, network.sha256)
+
+    if not (aux := network.aux_files.filter(id=request.POST.get('aux_id', 0)).first()):
+        return OpenBench.views.redirect(request, edit_url, error='No such auxiliary file')
+
+    aux_name, aux_sha = aux.name, aux.sha256
+    aux.delete()
+
+    # Only delete the stored file once nothing else references it
+    if not NetworkAuxFile.objects.filter(sha256=aux_sha).exists() \
+            and not Network.objects.filter(sha256=aux_sha).exists():
+        FileSystemStorage().delete(aux_sha)
+
+    return OpenBench.views.redirect(request, edit_url, status='Deleted %s' % (aux_name))
+
 def network_download_aux(request, engine, aux):
 
     # Same as network_download, but for an auxiliary file (eg progress.bin)
@@ -406,7 +453,16 @@ def network_download_aux(request, engine, aux):
 def network_edit(request, engine, network):
 
     if request.method == 'GET':
-        return OpenBench.views.render(request, 'network.html', { 'network' : network })
+        return OpenBench.views.render(request, 'network.html', {
+            'network' : network, 'aux_files' : list(network.aux_files.all()) })
+
+    # Auxiliary files can be added and removed after the fact, so a
+    # forgotten eval_options.txt does not force a full re-upload
+    if request.POST.get('action') == 'aux_add':
+        return network_aux_add(request, engine, network)
+
+    if request.POST.get('action') == 'aux_delete':
+        return network_aux_delete(request, engine, network)
 
     new_name        = request.POST['name']
     new_default     = request.POST['default'] == 'TRUE'

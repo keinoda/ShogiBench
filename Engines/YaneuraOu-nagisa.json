@@ -12,7 +12,7 @@
         "binary"               : "YaneuraOu-by-gcc",
         "network_option"       : "EvalDir",
         "network_filename"     : "nn.bin",
-        "network_aux_options"  : { "progress.bin" : "ProgressFilePath" },
+        "network_aux_options"  : { "progress.bin" : "LS_PROGRESS_COEFF" },
         "bench_args"           : "16 1 100000 default nodes",
 
         "variants"  : {

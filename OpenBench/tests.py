@@ -223,6 +223,37 @@ class NetworkUploadTests(TestCase):
             response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/eval_options.txt/' % (network.sha256))
             self.assertEqual(b''.join(response.streaming_content), opts)
 
+    def test_aux_add_and_delete_on_edit_page(self):
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/editme.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', b'net-content') })
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='editme.bin')
+
+            # Add two aux files after the fact
+            self.client.post('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256), {
+                'action'   : 'aux_add',
+                'auxfiles' : [SimpleUploadedFile('progress.bin', b'prog'),
+                              SimpleUploadedFile('eval_options.txt', b'FV_SCALE=28\n')] })
+            self.assertEqual(network.aux_files.count(), 2)
+
+            # Duplicate names are rejected
+            response = self.client.post('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256), {
+                'action'   : 'aux_add',
+                'auxfiles' : [SimpleUploadedFile('progress.bin', b'other')] }, follow=True)
+            self.assertEqual(network.aux_files.count(), 2)
+
+            # Delete one and confirm the row disappears
+            aux = network.aux_files.get(name='progress.bin')
+            self.client.post('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256), {
+                'action' : 'aux_delete', 'aux_id' : aux.id })
+            self.assertEqual(network.aux_files.count(), 1)
+            self.assertFalse(network.aux_files.filter(name='progress.bin').exists())
+
+            # The edit page renders the remaining aux file
+            response = self.client.get('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256))
+            self.assertContains(response, 'eval_options.txt')
+
     def test_upload_with_legacy_single_aux_field(self):
         with override_settings(MEDIA_ROOT=self.media), \
              patch('OpenBench.utils.MEDIA_ROOT', self.media):

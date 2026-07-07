@@ -313,8 +313,13 @@ Network(評価関数)違いの対戦は従来どおり: `/networks/` にファ�
    一緒にアップロードできます。ワーカーは**すべての補助ファイルを nn.bin と
    同じディレクトリに元のファイル名で配置**します。さらに:
    - engine config の `build.network_aux_options` に載っている名前のファイル
-     (例: `"progress.bin": "ProgressFilePath"`)は、そのパスが対応する
-     USIオプションとして渡されます
+     (例: `"progress.bin": "LS_PROGRESS_COEFF"`)は、そのパスが対応する
+     USIオプションとして渡されます(絶対パス)。オプション名は全YaneuraOu系
+     エンジンで `LS_PROGRESS_COEFF` に統一済み
+   - 補助ファイルは登録後でも `/networks/` → 該当ネットのEDITページで
+     追加・削除できます(再アップロード不要)
+   - 診断: インスタンス上で `Scripts/progress_check.sh` を実行すると、
+     配置→オプション存在→読み込み→効果を自動判定します
    - **`eval_options.txt`** という名前のファイルは特別扱いで、`Name=Value` を
      1行ずつ書いておくと **bench と対局の両方で必ず setoption として適用**
      されます(`#` 以降はコメント)。評価関数ごとに指定が必須のオプション
