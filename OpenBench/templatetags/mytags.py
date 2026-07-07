@@ -176,6 +176,10 @@ def prettyName(name):
 
 def prettyDevName(test):
 
+    # A user-provided label always wins over the derived names
+    if test.dev_display:
+        return test.dev_display
+
     # If engines are different, use the base name + branch
     if test.dev_engine != test.base_engine:
         return '[%s] %s' % (test.base_engine, test.base.name)
@@ -386,10 +390,10 @@ def workload_pretty_name(workload):
 
 def git_diff_text(workload, N=24):
 
-    dev_name = workload.dev.name
+    dev_name = workload.dev_display or workload.dev.name
     dev_name = dev_name[:N] + '...' if len(dev_name) > N else dev_name
 
-    base_name = workload.base.name
+    base_name = workload.base_display or workload.base.name
     base_name = base_name[:N] + '...' if len(base_name) > N else base_name
 
     return '%s vs %s' % (dev_name, base_name)

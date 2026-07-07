@@ -67,6 +67,10 @@
                     <label for="dev_branch" > {{dev_text}} ブランチ </label> <input id="dev_branch" name="dev_branch" autofocus>
                 </div>
                 <div class="row">
+                    <label for="dev_display" title="一覧やテストページでこの側を指す名前。省略時はブランチ名/ネットワーク名から自動決定"> {{dev_text}} 表示名 </label>
+                    <input id="dev_display" name="dev_display" placeholder="(任意) 例: Suisho11-新探索">
+                </div>
+                <div class="row">
                     <label for="dev_bench" title="空欄なら照合なし。数値を入れるとワーカーがbench値を照合します"> {{dev_text}} Bench </label> <input id="dev_bench" name="dev_bench" placeholder="(任意) 空欄=照合なし / 数値=bench照合">
                 </div>
                 <div class="row">
@@ -92,6 +96,10 @@
 
                     <div class="row">
                         <label for="base_branch"> Base ブランチ </label> <input id="base_branch" name="base_branch">
+                    </div>
+                    <div class="row">
+                        <label for="base_display" title="一覧やテストページでこの側を指す名前。省略時はブランチ名/ネットワーク名から自動決定"> Base 表示名 </label>
+                        <input id="base_display" name="base_display" placeholder="(任意) 例: Suisho11-旧探索">
                     </div>
                     <div class="row">
                         <label for="base_bench" title="空欄なら照合なし。数値を入れるとワーカーがbench値を照合します"> Base Bench </label> <input id="base_bench" name="base_bench" placeholder="(任意) 空欄=照合なし / 数値=bench照合">

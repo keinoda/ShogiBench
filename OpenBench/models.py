@@ -164,6 +164,10 @@ class Test(Model):
     dev_build_name   = CharField(max_length=64,  default='default')
     dev_build_args   = CharField(max_length=512, blank=True, default='')
 
+    # Optional label shown instead of the auto-derived branch/net name,
+    # for tests whose sides would otherwise be indistinguishable
+    dev_display      = CharField(max_length=64, blank=True, default='')
+
     # Base Engine, and all of its settings
     base              = ForeignKey('Engine', PROTECT, related_name='base')
     base_repo         = CharField(max_length=1024)
@@ -174,6 +178,7 @@ class Test(Model):
     base_time_control = CharField(max_length=32)
     base_build_name   = CharField(max_length=64,  default='default')
     base_build_args   = CharField(max_length=512, blank=True, default='')
+    base_display      = CharField(max_length=64, blank=True, default='')
 
     # Changable Test Parameters
     workload_size = IntegerField(default=32)

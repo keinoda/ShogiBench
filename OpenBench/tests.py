@@ -341,6 +341,55 @@ class NetworkUploadTests(TestCase):
 
         self.assertFalse(Network.objects.filter(name='theirs.bin').exists())
 
+class SharedBuildVariantTests(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user('alice', 'a@example.com', 'account-password')
+        Profile.objects.create(user=self.user, enabled=True)
+        self.client.login(username='alice', password='account-password')
+
+    def test_shared_variant_appears_for_every_engine(self):
+        self.client.post('/builds/', {
+            'action'  : 'create',
+            'engine'  : '*',
+            'name'    : 'shared-avx512',
+            'command' : 'make -j tournament COMPILER=clang++ TARGET_CPU=AVX512VNNI' })
+
+        variant = BuildVariant.objects.get(engine='*', name='shared-avx512')
+        self.assertIn('TARGET_CPU=AVX512VNNI', variant.args)
+
+        self.assertIn('shared-avx512', engine_build_variants('YaneuraOu-nagisa'))
+        self.assertIn('shared-avx512', engine_build_variants('YaneuraOu'))
+        self.assertIn('shared-avx512', engine_build_variants('YaneuraOu-souyuukou'))
+
+    def test_engine_specific_wins_over_shared(self):
+        BuildVariant.objects.create(engine='*', name='dup', args='shared', author='alice')
+        BuildVariant.objects.create(engine='YaneuraOu-nagisa', name='dup', args='specific', author='alice')
+        self.assertEqual(engine_build_variants('YaneuraOu-nagisa')['dup'], 'specific')
+        self.assertEqual(engine_build_variants('YaneuraOu')['dup'], 'shared')
+
+class DisplayNameTests(TestCase):
+
+    def make_test(self, dev_display='', base_display=''):
+        from OpenBench.models import Engine, Test
+        engine = Engine.objects.create(name='master', source='s', sha='a' * 40, bench=1)
+        return Test.objects.create(
+            author='alice', dev=engine, base=engine,
+            dev_engine='YaneuraOu-nagisa', base_engine='YaneuraOu-nagisa',
+            dev_display=dev_display, base_display=base_display)
+
+    def test_display_names_take_priority(self):
+        from OpenBench.templatetags.mytags import git_diff_text, prettyDevName
+        test = self.make_test(dev_display='新探索', base_display='旧探索')
+        self.assertEqual(git_diff_text(test), '新探索 vs 旧探索')
+        self.assertEqual(prettyDevName(test), '新探索')
+
+    def test_fallback_without_display_names(self):
+        from OpenBench.templatetags.mytags import git_diff_text, prettyDevName
+        test = self.make_test()
+        self.assertEqual(git_diff_text(test), 'master vs master')
+        self.assertEqual(prettyDevName(test), 'master')
+
 class WorkloadPermissionTests(TestCase):
 
     def setUp(self):
