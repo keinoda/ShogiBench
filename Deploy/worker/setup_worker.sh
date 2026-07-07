@@ -49,7 +49,6 @@ PKGS=""
 command -v git     >/dev/null || PKGS="$PKGS git"
 command -v curl    >/dev/null || PKGS="$PKGS curl"
 command -v make    >/dev/null || PKGS="$PKGS make"
-command -v clang++ >/dev/null || PKGS="$PKGS clang"
 command -v g++     >/dev/null || PKGS="$PKGS g++"
 command -v python3 >/dev/null || PKGS="$PKGS python3"
 command -v pip3    >/dev/null || PKGS="$PKGS python3-pip"
@@ -59,6 +58,19 @@ command -v python  >/dev/null || PKGS="$PKGS python-is-python3"
 if [ -n "$PKGS" ]; then
     $SUDO apt-get update -y
     $SUDO apt-get install -y --no-install-recommends $PKGS
+fi
+
+# The engines require clang++ >= 16, newer than many distro defaults
+# (Ubuntu 22.04 ships clang 14). Pull a modern one from apt.llvm.org and
+# shadow the distro binaries via /usr/local/bin, which precedes them
+CLANG_VER=$(command -v clang++ >/dev/null && clang++ --version | grep -oE 'version [0-9]+' | grep -oE '[0-9]+' | head -1 || echo 0)
+if [ "${CLANG_VER:-0}" -lt 16 ]; then
+    echo "[setup_worker] clang++ >= 16 required (found: ${CLANG_VER:-none}), installing clang-18"
+    $SUDO apt-get update -y
+    $SUDO apt-get install -y --no-install-recommends lsb-release wget gnupg software-properties-common
+    curl -sSf https://apt.llvm.org/llvm.sh | $SUDO bash -s -- 18
+    $SUDO ln -sf "$(command -v clang++-18)" /usr/local/bin/clang++
+    $SUDO ln -sf "$(command -v clang-18)"   /usr/local/bin/clang
 fi
 
 # Rust toolchain, required to build the shogitest match runner. Distro
