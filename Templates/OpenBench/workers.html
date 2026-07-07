@@ -136,23 +136,24 @@
 
         <p>
             インスタンスのSSHアドレス(vast.ai の
-            <code>ssh -p 12345 root@ssh4.vast.ai</code> や <code>host:port</code> 形式)を
-            貼り付けると、サーバーが管理者設定の秘密鍵でログインし、依存関係の
-            インストールからワーカーの起動まで自動で行います。
+            <code>ssh -p 12345 root@ssh4.vast.ai</code>、AWS の
+            <code>ec2-user@203.0.113.7</code> や <code>ubuntu@203.0.113.7</code>)を
+            貼り付けると、サーバーが <code>OPENBENCH_SSH_PRIVATE_KEY</code> の
+            秘密鍵でログインし、依存関係のインストールからワーカーの起動まで
+            自動で行います。
         </p>
 
         {% if ssh_key_configured %}
             <p>
                 サーバーのSSH鍵: <code>{{ssh_key_fingerprint}}</code><br>
-                この鍵の公開鍵が vast.ai の <i>Account › SSH Keys</i> に登録されていれば、
-                新しいインスタンスには自動で入ります(あなたが普段SSHに使っている
-                鍵をサーバーに設定した場合は、追加の登録は不要です)。
+                iShogi から接続している AWS と同じように、この鍵でSSHできる
+                インスタンスなら追加の秘密鍵指定は不要です。
             </p>
         {% else %}
             <p>
                 <b>サーバーにSSH秘密鍵が設定されていません。</b>
                 管理者が一度だけ次を実行してください
-                (vast.ai に公開鍵を登録済みの、パスフレーズなしの鍵):
+                (接続先へ既に入っている公開鍵に対応する、パスフレーズなしの鍵):
             </p>
             <pre>fly secrets set OPENBENCH_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"</pre>
         {% endif %}
@@ -166,7 +167,7 @@
                     <div class="row">
                         <label for="ssh_target">SSHアドレス</label>
                         <input id="ssh_target" type="text" name="ssh_target"
-                            placeholder="ssh -p 12345 root@ssh4.vast.ai">
+                            placeholder="ssh -p 12345 root@ssh4.vast.ai / ec2-user@203.0.113.7">
                     </div>
                     <div class="row">
                         <label for="key_id" title="ワーカーがこのサーバーに接続する際のAPI認証キー。未選択なら自動で選択・作成されます">ワーカーキー(自動)</label>
@@ -194,8 +195,8 @@
         {% with keys.first as newest %}
             <p>
                 ワーカーマシン上で以下を実行してください(スレッド数は適宜調整)。
-                vast.ai のテンプレートなら <i>On-start Script</i> に貼るか、
-                export の内容を環境変数として設定します。
+                vast.ai のテンプレートや AWS の user data では、export の内容を
+                環境変数として設定してから bootstrap を起動します。
             </p>
 
             <pre id="worker-snippet">export OPENBENCH_SERVER={{server_url}}

@@ -542,11 +542,37 @@ def parse_ssh_target(text):
 
     raise ValueError('Unrecognized SSH target: %s' % (text))
 
+def upload_worker_bootstrap(client, script_data):
+
+    try:
+        with client.open_sftp() as sftp:
+            sftp.putfo(io.BytesIO(script_data), '/tmp/shogibench_setup.sh')
+        return
+    except Exception as sftp_error:
+        try:
+            stdin, stdout, stderr = client.exec_command(
+                'cat > /tmp/shogibench_setup.sh', timeout=20)
+            stdin.write(script_data)
+            stdin.flush()
+            stdin.channel.shutdown_write()
+
+            exit_status = stdout.channel.recv_exit_status()
+            if exit_status != 0:
+                error = stderr.read()
+                if isinstance(error, bytes):
+                    error = error.decode('utf-8', 'replace')
+                raise Exception('exit status %d: %s' % (exit_status, error.strip()))
+
+        except Exception as exec_error:
+            raise Exception(
+                'Bootstrap upload failed: SFTP failed (%s); exec upload failed (%s)' %
+                (sftp_error, exec_error))
+
 def launch_worker_over_ssh(request, pkey, worker_key, target, threads):
 
     ## Connect to the instance with the server's key, upload the bootstrap
-    ## script over SFTP, and launch it detached with the connection settings
-    ## for this server baked in. Returns a status string, or raises.
+    ## script, and launch it detached with the connection settings for this
+    ## server baked in. Returns a status string, or raises.
 
     user, host, port = parse_ssh_target(target)
 
@@ -561,8 +587,7 @@ def launch_worker_over_ssh(request, pkey, worker_key, target, threads):
         # Upload our own copy of the bootstrap script, so nothing external is needed
         script = os.path.join(PROJECT_PATH, 'Deploy', 'worker', 'setup_worker.sh')
         with open(script, 'rb') as fin:
-            with client.open_sftp() as sftp:
-                sftp.putfo(io.BytesIO(fin.read()), '/tmp/shogibench_setup.sh')
+            upload_worker_bootstrap(client, fin.read())
 
         exports = {
             'OPENBENCH_SERVER'    : server_public_url(request),

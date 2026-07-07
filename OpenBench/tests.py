@@ -722,6 +722,10 @@ class SSHTargetParsingTests(TestCase):
         self.assertEqual(parse_ssh_target('ubuntu@203.0.113.7:2222'),
                          ('ubuntu', '203.0.113.7', 2222))
 
+    def test_aws_user_host_defaults_to_port_22(self):
+        self.assertEqual(parse_ssh_target('ec2-user@203.0.113.7'),
+                         ('ec2-user', '203.0.113.7', 22))
+
     def test_host_port(self):
         self.assertEqual(parse_ssh_target('ssh4.vast.ai:12345'),
                          ('root', 'ssh4.vast.ai', 12345))
@@ -773,6 +777,43 @@ class WorkerConnectTests(TestCase):
         self.assertIn(self.key.token, command)
         self.assertIn('OPENBENCH_USERNAME=alice', command)
         self.assertIn('shogibench_setup.sh', command)
+
+    @patch('OpenBench.views.paramiko.SSHClient')
+    def test_connect_falls_back_to_exec_upload_when_sftp_unavailable(self, mock_ssh_client):
+        connection = mock_ssh_client.return_value
+        connection.open_sftp.side_effect = Exception('EOF during negotiation')
+
+        upload_stdin = MagicMock()
+        upload_stdout = MagicMock()
+        upload_stdout.channel.recv_exit_status.return_value = 0
+
+        launch_stdout = MagicMock()
+        launch_stdout.readline.return_value = 'LAUNCHED\n'
+        connection.exec_command.side_effect = [
+            (upload_stdin, upload_stdout, MagicMock()),
+            (MagicMock(), launch_stdout, MagicMock()),
+        ]
+
+        with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
+            response = self.client.post('/workers/connect/', {
+                'ssh_target' : 'root@203.0.113.7:22',
+                'key_id'     : self.key.id,
+                'threads'    : '',
+            })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(connection.exec_command.call_count, 2)
+
+        upload_command = connection.exec_command.call_args_list[0].args[0]
+        self.assertEqual(upload_command, 'cat > /tmp/shogibench_setup.sh')
+        upload_stdin.write.assert_called_once()
+        self.assertIsInstance(upload_stdin.write.call_args.args[0], bytes)
+        upload_stdin.flush.assert_called_once()
+        upload_stdin.channel.shutdown_write.assert_called_once()
+
+        launch_command = connection.exec_command.call_args_list[1].args[0]
+        self.assertIn(self.key.token, launch_command)
+        self.assertIn('nohup /tmp/shogibench_setup.sh', launch_command)
 
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_auto_creates_worker_key(self, mock_ssh_client):
