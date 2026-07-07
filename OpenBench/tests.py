@@ -341,6 +341,54 @@ class NetworkUploadTests(TestCase):
 
         self.assertFalse(Network.objects.filter(name='theirs.bin').exists())
 
+class WorkloadPermissionTests(TestCase):
+
+    def setUp(self):
+        from OpenBench.models import Engine, Test
+        self.alice = User.objects.create_user('alice', 'a@example.com', 'pw-alice')
+        Profile.objects.create(user=self.alice, enabled=True, approver=False)
+        self.boss = User.objects.create_user('boss', 'b@example.com', 'pw-boss')
+        Profile.objects.create(user=self.boss, enabled=True, approver=True)
+
+        engine    = Engine.objects.create(name='e', source='s', sha='a' * 40, bench=1)
+        self.test = Test.objects.create(author='alice', dev=engine, base=engine)
+        self.client.login(username='alice', password='pw-alice')
+
+    def refresh(self):
+        self.test.refresh_from_db()
+        return self.test
+
+    def test_author_cannot_approve_own_test(self):
+        self.client.post('/test/%d/APPROVE/' % (self.test.id))
+        self.assertFalse(self.refresh().approved)
+
+    def test_author_can_stop_and_delete_own_test(self):
+        self.client.post('/test/%d/STOP/' % (self.test.id))
+        self.assertTrue(self.refresh().finished)
+        self.client.post('/test/%d/DELETE/' % (self.test.id))
+        self.assertTrue(self.refresh().deleted)
+
+    def test_other_user_cannot_stop_or_delete(self):
+        other = User.objects.create_user('mallory', 'm@example.com', 'pw-m')
+        Profile.objects.create(user=other, enabled=True, approver=False)
+        client = Client()
+        client.login(username='mallory', password='pw-m')
+
+        client.post('/test/%d/STOP/' % (self.test.id))
+        self.assertFalse(self.refresh().finished)
+        client.post('/test/%d/DELETE/' % (self.test.id))
+        self.assertFalse(self.refresh().deleted)
+        client.post('/test/%d/APPROVE/' % (self.test.id))
+        self.assertFalse(self.refresh().approved)
+
+    def test_approver_can_approve_and_stop_any_test(self):
+        client = Client()
+        client.login(username='boss', password='pw-boss')
+        client.post('/test/%d/APPROVE/' % (self.test.id))
+        self.assertTrue(self.refresh().approved)
+        client.post('/test/%d/STOP/' % (self.test.id))
+        self.assertTrue(self.refresh().finished)
+
 class BuildCommandNormalizationTests(TestCase):
 
     def test_strips_make_and_managed_arguments(self):

@@ -27,6 +27,7 @@
 
 import OpenBench.views
 
+from OpenBench.config import OPENBENCH_CONFIG
 from OpenBench.models import *
 
 def modify_workload(request, id, action=None):
@@ -53,6 +54,16 @@ def modify_workload(request, id, action=None):
     profile = Profile.objects.get(user=request.user)
     if not profile.approver and workload.author != request.user.username:
         return OpenBench.views.redirect(request, '/index/', error='You cannot interact with another user\'s Workload')
+
+    # Approving always requires approver rights: the ownership rule above
+    # lets authors stop or delete their own Workloads, but must never let
+    # them push their own work onto the compute pool
+    if action == 'APPROVE' and not profile.approver:
+        return OpenBench.views.redirect(request, '/index/', error='Only approvers may approve Workloads')
+
+    # With cross-approval enabled, approvers may not approve their own work
+    if action == 'APPROVE' and OPENBENCH_CONFIG['use_cross_approval'] and workload.author == request.user.username:
+        return OpenBench.views.redirect(request, '/index/', error='Cross-approval requires a different approver')
 
     # Make the change; Record the change; Save the change
     message = actions[action](request, profile, workload)
