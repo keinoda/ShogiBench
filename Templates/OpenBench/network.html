@@ -65,4 +65,52 @@
         </div>
     </form>
 
+    <br>
+
+    <h3>補助ファイル</h3>
+
+    <p>
+        評価関数と同じディレクトリに配置されるファイルです。<code>progress.bin</code> は
+        パスが <code>LS_PROGRESS_COEFF</code> オプションとして渡され、
+        <code>eval_options.txt</code> の <code>Name=Value</code> 行は bench と対局の
+        両方で必ず setoption されます(<code>{DIR}</code> は配置先に展開)。
+    </p>
+
+    <table>
+        <tr> <th>ファイル名</th> <th>sha256(先頭8)</th> <th></th> </tr>
+        {% for aux in aux_files %}
+            <tr>
+                <td>{{aux.name}}</td>
+                <td class="numeric">{{aux.sha256}}</td>
+                <td>
+                    <form method="POST" action="/networks/{{network.engine}}/EDIT/{{network.sha256}}/">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="aux_delete">
+                        <input type="hidden" name="aux_id" value="{{aux.id}}">
+                        <input type="submit" class="anchorbutton btn-preset" value="削除">
+                    </form>
+                </td>
+            </tr>
+        {% empty %}
+            <tr> <td colspan="3">(なし)</td> </tr>
+        {% endfor %}
+    </table>
+
+    <br>
+
+    <form method="POST" enctype="multipart/form-data"
+          action="/networks/{{network.engine}}/EDIT/{{network.sha256}}/">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="aux_add">
+        <div class="form">
+            <div class="col">
+                <div class="row">
+                    <label for="auxfiles">追加(複数可)</label>
+                    <input id="auxfiles" name="auxfiles" type="file" multiple>
+                </div>
+                <input class="anchorbutton btn-blue w-100" type="submit" value="補助ファイルを追加">
+            </div>
+        </div>
+    </form>
+
 {% endblock %}
