@@ -207,7 +207,31 @@ curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/work
 | `SHOGIBENCH_REPO_URL` | このリポジトリ | クライアント取得元 |
 | `SHOGIBENCH_REPO_REF` | `shogi` | 取得するブランチ |
 
-### 3-5. 動作確認
+### 3-5. マシンの一時停止(計算資源を返したいとき)
+
+`/workers/` の「稼働中のマシン」で **停止** を押すだけです。ワーカーは
+約30秒ごとに必ず通信してくるので、次の通信で実行中の対局が中断され、
+以後そのマシンには仕事が配られなくなります(SSHは不要)。
+
+- 未完の対局は他のマシンに配り直されるため、テストは壊れません
+- **再開**も同じ場所のボタンから(インスタンス側の操作は不要)
+- ワーカーのプロセスが再起動して新しいセッションになると停止要求は
+  引き継がれないので、**長期間止める場合はワーカーキーの無効化**も
+  あわせて行ってください(キーを再度有効化すれば自動で仕事を取り始めます)
+- インスタンス上で手動で完全停止したい場合:
+  `touch ~/shogibench-worker/Client/openbench.exit` のあと
+  `pkill -f shogibench_setup; pkill -f 'client.py'`。
+  エンジンの殺し残し掃除が必要なときは、**他の用途のエンジンを巻き込まない**よう
+  作業ディレクトリで絞り込むこと:
+  ```sh
+  for p in $(pgrep -f 'YaneuraOu-'); do
+    case "$(readlink /proc/$p/cwd)" in
+      "$HOME/shogibench-worker/Client"|"$HOME/shogibench-worker/Client/Engines") kill -9 "$p";;
+    esac
+  done
+  ```
+
+### 3-6. 動作確認
 
 - サーバーの `/machines/` に数十秒以内にマシンが現れます
 - `/workers/` の Last Used が更新されます

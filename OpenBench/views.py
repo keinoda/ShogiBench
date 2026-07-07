@@ -664,6 +664,29 @@ def workers(request):
             WorkerKey.objects.create(user=request.user, name=name, token=token)
             return redirect(request, '/workers/', status='Created Worker Key "%s"' % (name))
 
+        # Machines poll every ~30 seconds, so a stop flag on the Machine row
+        # reaches them on their next report: current games are aborted and no
+        # new workloads are served, freeing the instance without SSH access
+        if action in ('stop_machine', 'resume_machine'):
+
+            machine = Machine.objects.filter(id=request.POST.get('machine_id', 0)).first()
+            if not machine:
+                return redirect(request, '/workers/', error='No such Machine')
+
+            if machine.user != request.user and not profile.approver:
+                return redirect(request, '/workers/', error='Only the owner or an approver can control this Machine')
+
+            machine.info['stop_requested'] = action == 'stop_machine'
+            machine.save()
+
+            if action == 'stop_machine':
+                status = 'マシン #%d に停止を要求しました(次の通信、30秒以内に反映)。' % (machine.id)
+                status += '長期間止める場合はワーカーキーの無効化もあわせて行ってください'
+            else:
+                status = 'マシン #%d の停止要求を解除しました' % (machine.id)
+
+            return redirect(request, '/workers/', status=status)
+
         key = WorkerKey.objects.filter(user=request.user, id=request.POST.get('key_id', 0)).first()
         if not key:
             return redirect(request, '/workers/', error='No such Worker Key')
@@ -681,8 +704,13 @@ def workers(request):
 
     server_key = load_server_ssh_key()
 
+    machines = OpenBench.utils.getRecentMachines()
+    if not profile.approver:
+        machines = machines.filter(user=request.user)
+
     data = {
         'keys'       : WorkerKey.objects.filter(user=request.user).order_by('-id'),
+        'machines'   : machines.order_by('-id'),
         'server_url' : server_public_url(request),
         'ssh_key_configured'  : server_key is not None,
         'ssh_key_fingerprint' : ssh_key_fingerprint(server_key) if server_key else '',
@@ -1187,7 +1215,13 @@ def client_submit_error(request, machine):
 def client_submit_results(request, machine):
 
     # Returns {}, or { 'stop' : True }
-    return JsonResponse(OpenBench.utils.update_test(request, machine))
+    response = OpenBench.utils.update_test(request, machine)
+
+    # Stops requested from the /workers/ page abort the current games
+    if machine.info.get('stop_requested'):
+        response['stop'] = True
+
+    return JsonResponse(response)
 
 @csrf_exempt
 @verify_worker
@@ -1195,6 +1229,10 @@ def client_heartbeat(request, machine):
 
     # Force a refresh of the updated timestamp
     machine.save()
+
+    # Stops requested from the /workers/ page abort the current games
+    if machine.info.get('stop_requested'):
+        return JsonResponse({ 'stop' : True })
 
     # Include a 'stop' header iff the test was finished
     test = Test.objects.get(id=int(request.POST['test_id']))
