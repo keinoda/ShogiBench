@@ -101,9 +101,10 @@ def longStatBlock(test):
         return str(value).replace('`', "'")
 
     def branch_name(branch):
+        display = getattr(test, '%s_display' % branch)
         netname = getattr(test, '%s_netname' % branch)
         engine  = getattr(test, branch)
-        return discord_text(netname or prettyName(engine.name))
+        return discord_text(display or netname or prettyName(engine.name))
 
     def match_settings():
         dev_tc      = timecontrol_text(test.dev_time_control)
