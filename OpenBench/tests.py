@@ -383,6 +383,13 @@ class DisplayNameTests(TestCase):
         self.assertEqual(git_diff_text(test), '新探索 vs 旧探索')
         self.assertEqual(prettyDevName(test), '新探索')
 
+    def test_stat_block_carries_display_names(self):
+        from OpenBench.templatetags.mytags import longStatBlock
+        test = self.make_test(dev_display='新探索', base_display='旧探索')
+        test.dev_options = test.base_options = 'Threads=1 Hash=64'
+        test.dev_time_control = test.base_time_control = '8.0+0.08'
+        self.assertTrue(longStatBlock(test).startswith('新探索 vs 旧探索\n'))
+
     def test_fallback_without_display_names(self):
         from OpenBench.templatetags.mytags import git_diff_text, prettyDevName
         test = self.make_test()
