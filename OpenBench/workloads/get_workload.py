@@ -48,6 +48,10 @@ from django.db import transaction
 
 def get_workload(request, machine):
 
+    # Machines stopped from the /workers/ page receive no new work
+    if machine.info.get('stop_requested'):
+        return {}
+
     # Select a workload from the possible ones, if we can
     if not (test := select_workload(request, machine)):
         return {}

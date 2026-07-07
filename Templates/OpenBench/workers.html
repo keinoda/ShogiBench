@@ -85,6 +85,53 @@
 
         <br>
 
+        <h3>稼働中のマシン</h3>
+
+        <p>
+            「停止」を押すと、次の通信(30秒以内)で実行中の対局が中断され、
+            そのマシンには新しい仕事が配られなくなります。未完の対局は他の
+            マシンへ配り直されるのでテストは壊れません。ワーカーが再起動して
+            新しいセッションになると停止要求は引き継がれないため、
+            <b>長期間止める場合はワーカーキーの無効化もあわせて</b>行ってください。
+        </p>
+
+        {% if machines %}
+            <table class="hoverable">
+                <tr class="table-header">
+                    <th>#</th>
+                    <th>ユーザー</th>
+                    <th>最終通信</th>
+                    <th>状態</th>
+                    <th>操作</th>
+                </tr>
+                {% for machine in machines %}
+                    <tr>
+                        <td>{{machine.id}}</td>
+                        <td>{{machine.user.username}}</td>
+                        <td><span class="timestamp">{{machine.updated|date:"U"}}</span></td>
+                        <td>{% if machine.info.stop_requested %}停止要求中{% else %}稼働中{% endif %}</td>
+                        <td>
+                            <form method="POST" action="/workers/" style="display: inline;">
+                                {% csrf_token %}
+                                <input type="hidden" name="machine_id" value="{{machine.id}}">
+                                {% if machine.info.stop_requested %}
+                                    <input type="hidden" name="action" value="resume_machine">
+                                    <input type="submit" value="再開" class="anchorbutton btn-blue">
+                                {% else %}
+                                    <input type="hidden" name="action" value="stop_machine">
+                                    <input type="submit" value="停止" class="anchorbutton btn-red">
+                                {% endif %}
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <p>(直近5分間に通信のあったマシンはありません)</p>
+        {% endif %}
+
+        <br>
+
         <h3>SSHでインスタンスを接続</h3>
 
         <p>

@@ -179,6 +179,31 @@ class WorkerKeyPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'box1')
 
+    def test_owner_can_stop_and_resume_machine(self):
+        from OpenBench.models import Machine
+        machine = Machine.objects.create(user=self.user, info={})
+
+        self.client.post('/workers/', { 'action' : 'stop_machine', 'machine_id' : machine.id })
+        machine.refresh_from_db()
+        self.assertTrue(machine.info['stop_requested'])
+
+        self.client.post('/workers/', { 'action' : 'resume_machine', 'machine_id' : machine.id })
+        machine.refresh_from_db()
+        self.assertFalse(machine.info['stop_requested'])
+
+    def test_non_owner_cannot_stop_machine(self):
+        from OpenBench.models import Machine
+        machine = Machine.objects.create(user=self.user, info={})
+
+        other = User.objects.create_user('mallory', 'm@example.com', 'password3')
+        Profile.objects.create(user=other, enabled=True, approver=False)
+        client = Client()
+        client.login(username='mallory', password='password3')
+
+        client.post('/workers/', { 'action' : 'stop_machine', 'machine_id' : machine.id })
+        machine.refresh_from_db()
+        self.assertNotIn('stop_requested', machine.info)
+
 class NetworkUploadTests(TestCase):
 
     def setUp(self):
