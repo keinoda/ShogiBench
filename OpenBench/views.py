@@ -376,11 +376,16 @@ def normalize_build_command(text):
 def engine_build_variants(engine):
 
     ## Static variants from the engine's json config, merged with the
-    ## user-defined ones from the /builds/ page. Static names win.
+    ## user-defined ones from the /builds/ page. Static names win, then
+    ## engine-specific variants, then variants shared across all engines
+    ## (registered under the pseudo-engine '*')
 
     variants = dict(OPENBENCH_CONFIG['engines'][engine]['build']['variants'])
 
     for variant in BuildVariant.objects.filter(engine=engine).order_by('name'):
+        variants.setdefault(variant.name, variant.args)
+
+    for variant in BuildVariant.objects.filter(engine='*').order_by('name'):
         variants.setdefault(variant.name, variant.args)
 
     return variants
@@ -407,14 +412,17 @@ def builds(request):
             name    = request.POST.get('name', '').strip()[:64]
             command = request.POST.get('command', '').strip()
 
-            if engine not in OPENBENCH_CONFIG['engines']:
+            # '*' registers a variant shared by every engine
+            if engine != '*' and engine not in OPENBENCH_CONFIG['engines']:
                 return redirect(request, '/builds/', error='Unknown engine')
 
             if not re.match(r'^[\w.+()-]+$', name):
                 return redirect(request, '/builds/', error='Variant names may only contain letters, numbers, and ._+()-')
 
-            if name in OPENBENCH_CONFIG['engines'][engine]['build']['variants']:
-                return redirect(request, '/builds/', error='"%s" is a predefined variant of %s and cannot be changed' % (name, engine))
+            static_scope = OPENBENCH_CONFIG['engines'].keys() if engine == '*' else [engine]
+            for static_engine in static_scope:
+                if name in OPENBENCH_CONFIG['engines'][static_engine]['build']['variants']:
+                    return redirect(request, '/builds/', error='"%s" is a predefined variant of %s and cannot be changed' % (name, static_engine))
 
             if not command:
                 return redirect(request, '/builds/', error='Provide a build command')

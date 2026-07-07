@@ -2,6 +2,17 @@
 
 {% load static %}
 
+{% block scripts %}
+    <script>
+        function edit_variant(engine, name, args) {
+            document.getElementById('engine').value = engine;
+            document.getElementById('name').value = name;
+            document.getElementById('command').value = args;
+            document.getElementById('name').scrollIntoView({behavior: 'smooth', block: 'center'});
+        }
+    </script>
+{% endblock %}
+
 {% block content %}
 
     <h3>ビルドバリアント</h3>
@@ -11,6 +22,9 @@
         (<code>make</code> 本体・<code>-j</code>・<code>EXE=</code>・<code>EVALFILE=</code>・
         <code>CXX=</code> はワーカーが管理するため自動的に除去されます)。
         登録したバリアントは、テスト作成フォームの「ビルド」ドロップダウンに現れます。
+        既存の行の「編集」でフォームに読み込み、<b>同じ名前のまま登録すると上書き</b>、
+        名前を変えると別バリアントとして追加されます。エンジンに
+        <b>(全エンジン共通)</b> を選ぶと、すべてのエンジンで使えます。
     </p>
 
     <p>
@@ -29,6 +43,7 @@
                         {% for engine in config.engines %}
                             <option value="{{ engine }}">{{ engine }}</option>
                         {% endfor %}
+                        <option value="*">(全エンジン共通)</option>
                     </select>
                 </div>
                 <div class="row">
@@ -65,18 +80,23 @@
                     <td>{{name}}</td>
                     <td><code>{{args|default:"(引数なし)"}}</code></td>
                     <td>組み込み</td>
-                    <td></td>
+                    <td>
+                        <a class="anchorbutton btn-blue" title="この引数をフォームに読み込みます(組み込みは変更不可なので、別名を付けて登録してください)"
+                           onclick="edit_variant('{{engine|escapejs}}', '', '{{args|escapejs}}')">複製</a>
+                    </td>
                 </tr>
             {% endfor %}
         {% endfor %}
 
         {% for variant in variants %}
             <tr>
-                <td>{{variant.engine}}</td>
+                <td>{% if variant.engine == '*' %}(共通){% else %}{{variant.engine}}{% endif %}</td>
                 <td>{{variant.name}}</td>
                 <td><code>{{variant.args}}</code></td>
                 <td>{{variant.author}}</td>
                 <td>
+                    <a class="anchorbutton btn-blue"
+                       onclick="edit_variant('{{variant.engine|escapejs}}', '{{variant.name|escapejs}}', '{{variant.args|escapejs}}')">編集</a>
                     <form method="POST" action="/builds/" style="display: inline;">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="delete">

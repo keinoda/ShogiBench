@@ -140,6 +140,7 @@ def create_new_test(request):
 
     test.dev               = get_engine(*dev_info)
     test.dev_repo          = request.POST['dev_repo']
+    test.dev_display       = request.POST.get('dev_display', '').strip()[:64]
     test.dev_engine        = request.POST['dev_engine']
     test.dev_options       = request.POST['dev_options']
     test.dev_network       = request.POST['dev_network']
@@ -149,6 +150,7 @@ def create_new_test(request):
 
     test.base              = get_engine(*base_ingo)
     test.base_repo         = request.POST['base_repo']
+    test.base_display      = request.POST.get('base_display', '').strip()[:64]
     test.base_engine       = request.POST['base_engine']
     test.base_options      = request.POST['base_options']
     test.base_network      = request.POST['base_network']
@@ -211,6 +213,7 @@ def create_new_tune(request):
     test.upload_pgns      = request.POST['upload_pgns']
 
     test.dev              = test.base              = get_engine(*dev_info)
+    test.dev_display      = test.base_display      = request.POST.get('dev_display', '').strip()[:64]
     test.dev_repo         = test.base_repo         = request.POST['dev_repo']
     test.dev_engine       = test.base_engine       = request.POST['dev_engine']
     test.dev_options      = test.base_options      = request.POST['dev_options']
@@ -266,6 +269,7 @@ def create_new_datagen(request):
 
     test.dev               = get_engine(*dev_info)
     test.dev_repo          = request.POST['dev_repo']
+    test.dev_display       = request.POST.get('dev_display', '').strip()[:64]
     test.dev_engine        = request.POST['dev_engine']
     test.dev_options       = request.POST['dev_options']
     test.dev_network       = request.POST['dev_network']
@@ -275,6 +279,7 @@ def create_new_datagen(request):
 
     test.base              = get_engine(*base_ingo)
     test.base_repo         = request.POST['base_repo']
+    test.base_display      = request.POST.get('base_display', '').strip()[:64]
     test.base_engine       = request.POST['base_engine']
     test.base_options      = request.POST['base_options']
     test.base_network      = request.POST['base_network']
