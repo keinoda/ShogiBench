@@ -91,26 +91,64 @@ def longStatBlock(test):
 
     assert test.test_mode != 'SPSA'
 
-    threads     = int(OpenBench.utils.extract_option(test.dev_options, 'Threads'))
-    hashmb      = int(OpenBench.utils.extract_option(test.dev_options, 'Hash'))
-    timecontrol = test.dev_time_control + ['s', '']['=' in test.dev_time_control]
-    type_text   = 'SPRT' if test.test_mode == 'SPRT' else 'Conf'
+    def option_value(options, name):
+        return OpenBench.utils.extract_option(options, name) or '?'
+
+    def timecontrol_text(timecontrol):
+        return timecontrol + ['s', '']['=' in timecontrol]
+
+    def discord_text(value):
+        return str(value).replace('`', "'")
+
+    def branch_name(branch):
+        netname = getattr(test, '%s_netname' % branch)
+        engine  = getattr(test, branch)
+        return discord_text(netname or prettyName(engine.name))
+
+    def match_settings():
+        dev_tc      = timecontrol_text(test.dev_time_control)
+        base_tc     = timecontrol_text(test.base_time_control)
+        dev_threads = option_value(test.dev_options, 'Threads')
+        base_threads= option_value(test.base_options, 'Threads')
+        dev_hash    = option_value(test.dev_options, 'Hash')
+        base_hash   = option_value(test.base_options, 'Hash')
+
+        if dev_tc == base_tc and dev_threads == base_threads and dev_hash == base_hash:
+            return '%s, Threads=%s, Hash=%sMB' % (
+                dev_tc, dev_threads, dev_hash)
+
+        return 'Dev %s T=%s H=%sMB / Base %s T=%s H=%sMB' % (
+            dev_tc, dev_threads, dev_hash, base_tc, base_threads, base_hash)
+
+    def stronger_text(elo):
+        if test.games == 0:
+            return 'No games yet'
+        if elo > 0:
+            return '%s (+%0.2f Elo)' % (branch_name('dev'), abs(elo))
+        if elo < 0:
+            return '%s (+%0.2f Elo)' % (branch_name('base'), abs(elo))
+        return 'Even'
+
+    type_text = 'SPRT' if test.test_mode == 'SPRT' else 'Conf'
 
     lower, elo, upper = OpenBench.stats.Elo(test.results())
 
     lines = [
-        'Elo   | %0.2f +- %0.2f (95%%)' % (elo, max(upper - elo, elo - lower)),
-        '%-5s | %s Threads=%d Hash=%dMB' % (type_text, timecontrol, threads, hashmb),
+        '```text',
+        '%s vs %s' % (branch_name('dev'), branch_name('base')),
+        'Score for: %s' % (branch_name('dev')),
+        'STRONGER : %s' % (stronger_text(elo)),
+        'Elo      : %0.2f +- %0.2f (95%%)' % (elo, max(upper - elo, elo - lower)),
+        '%-8s : %s' % (type_text, match_settings()),
+        'Book     : %s' % (discord_text(test.book_name)),
     ]
 
     if test.test_mode == 'SPRT':
-        lines.append('LLR   | %0.2f (%0.2f, %0.2f) [%0.2f, %0.2f]' % (
+        lines.append('LLR      : %0.2f (%0.2f, %0.2f) [%0.2f, %0.2f]' % (
             test.currentllr, test.lowerllr, test.upperllr, test.elolower, test.eloupper))
 
-    lines.append('Games | N: %d W: %d L: %d D: %d' % test.as_nwld())
-
-    if test.use_penta:
-        lines.append('Penta | [%d, %d, %d, %d, %d]' % test.as_penta())
+    lines.append('Games    : N=%d W=%d L=%d D=%d' % test.as_nwld())
+    lines.append('```')
 
     return '\n'.join(lines)
 

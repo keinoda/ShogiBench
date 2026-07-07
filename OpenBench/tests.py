@@ -29,7 +29,8 @@ import tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
-from OpenBench.models import BuildVariant, Network, Profile, WorkerKey
+from OpenBench.models import BuildVariant, Engine, Network, Profile, Test, WorkerKey
+from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
 
 TEST_SSH_KEY = None
@@ -453,9 +454,100 @@ class BuildVariantPageTests(TestCase):
     def test_page_renders_static_and_db_variants(self):
         BuildVariant.objects.create(
             engine='YaneuraOu-nagisa', name='mine', args='normal FOO=1', author='alice')
+        self.assertEqual(set(engine_build_variants('YaneuraOu-nagisa')), {'default', 'mine'})
+
         response = self.client.get('/builds/')
         self.assertContains(response, 'mine')
-        self.assertContains(response, 'NNUE-KP256')
+        self.assertContains(response, 'default')
+        self.assertNotContains(response, 'NNUE-KP256')
+
+class StatBlockTests(TestCase):
+
+    def make_test(self, **overrides):
+        dev = Engine(
+            name='master',
+            source='https://github.com/keinoda/YaneuraOu',
+            sha='527a083a89c1f2e4413ab3b8664c0f2fb01769c0',
+            bench=0)
+        base = Engine(
+            name='master',
+            source='https://github.com/keinoda/YaneuraOu',
+            sha='527a083a89c1f2e4413ab3b8664c0f2fb01769c0',
+            bench=0)
+        data = {
+            'author'           : 'Nagisa',
+            'book_name'        : 'yaneuraou2025_ply24_shogi_sfen.epd',
+            'dev'              : dev,
+            'dev_repo'         : 'https://github.com/keinoda/YaneuraOu',
+            'dev_engine'       : 'YaneuraOu-nagisa',
+            'dev_options'      : 'Threads=4 Hash=256',
+            'dev_network'      : '642047FD',
+            'dev_netname'      : 'Suisho11',
+            'dev_time_control' : '10.0+0.10',
+            'dev_build_name'   : 'Suisho11',
+            'dev_build_args'   : 'tournament TARGET_CPU=AVX512VNNI',
+            'base'             : base,
+            'base_repo'        : 'https://github.com/keinoda/YaneuraOu',
+            'base_engine'      : 'YaneuraOu-nagisa',
+            'base_options'     : 'Threads=4 Hash=256',
+            'base_network'     : 'C7FFBD17',
+            'base_netname'     : 'fuuppi-v3',
+            'base_time_control': '10.0+0.10',
+            'base_build_name'  : 'fuuppi-v3',
+            'base_build_args'  : 'YANEURAOU_EDITION=YANEURAOU_ENGINE_SFNN_halfkahm2_768_7_64_ls9',
+            'scale_method'     : 'BASE',
+            'scale_nps'        : 1000000,
+            'syzygy_wdl'       : 'DISABLED',
+            'syzygy_adj'       : 'OPTIONAL',
+            'win_adj'          : 'movecount=3 score=2000',
+            'draw_adj'         : 'movenumber=40 movecount=8 score=10',
+            'test_mode'        : 'SPRT',
+            'elolower'         : 0.0,
+            'eloupper'         : 4.0,
+            'lowerllr'         : -2.25,
+            'currentllr'       : -0.12,
+            'upperllr'         : 2.89,
+            'games'            : 48,
+            'losses'           : 27,
+            'draws'            : 3,
+            'wins'             : 18,
+            'LL'               : 7,
+            'LD'               : 1,
+            'DD'               : 12,
+            'DW'               : 2,
+            'WW'               : 2,
+            'use_penta'        : True,
+        }
+        data.update(overrides)
+        return Test(**data)
+
+    def test_long_statblock_includes_conditions_and_dev_perspective(self):
+        block = longStatBlock(self.make_test())
+
+        self.assertTrue(block.startswith('```text\nSuisho11 vs fuuppi-v3'))
+        self.assertTrue(block.endswith('\n```'))
+        self.assertIn('Score for: Suisho11', block)
+        self.assertIn('STRONGER : fuuppi-v3 (+65.92 Elo)', block)
+        self.assertIn('SPRT     : 10.0+0.10s, Threads=4, Hash=256MB', block)
+        self.assertIn('Book     : yaneuraou2025_ply24_shogi_sfen.epd', block)
+        self.assertIn('Games    : N=48 W=18 L=27 D=3', block)
+        self.assertNotIn('Penta |', block)
+        self.assertNotIn('Dev    |', block)
+        self.assertNotIn('Base   |', block)
+        self.assertNotIn('Options|', block)
+        self.assertNotIn('Adjud  |', block)
+        self.assertNotIn('Syzygy |', block)
+        self.assertNotIn('BASE 1000000 NPS', block)
+        self.assertNotIn('Scale  |', block)
+
+    def test_long_statblock_reports_time_or_thread_odds(self):
+        block = longStatBlock(self.make_test(
+            base_time_control='5.0+0.05',
+            base_options='Threads=2 Hash=128'))
+
+        self.assertIn(
+            'Dev 10.0+0.10s T=4 H=256MB / Base 5.0+0.05s T=2 H=128MB',
+            block)
 
 class SSHTargetParsingTests(TestCase):
 

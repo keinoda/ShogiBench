@@ -59,7 +59,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 52 # Client version to send to the Server
+CLIENT_VERSION   = 53 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -546,29 +546,14 @@ class MatchRunner:
         def game_to_pair(g):
             return (g, g+1) if g % 2 else (g-1, g)
 
-        # Find the Pentanomial index given a game pair
-        def pair_to_penta(r1, r2):
-            lookup = { '0-1' : 0, '1/2-1/2' : 1, '1-0' : 2 }
-            return lookup[r1] + 2 - lookup[r2]
-
-        # Find the Trinomial indices, from our POV, for a give game pair
-        def pair_to_trinomial(r1, r2):
-            lookup = { '0-1' : 0, '1/2-1/2' : 1, '1-0' : 2 }
-            return lookup[r1], 2 - lookup[r2]
-
-        # Extract the game # and result str from a match runner output line
-        def parse_finished_game(line):
-            tokens = line.split()
-            return int(tokens[2]), tokens[6]
+        game, result, reason = MatchRunner.parse_finished_game(line)
 
         # Parse for errors resulting in adjudication
-        reason = line.split(':')[1]
         results['crashes'   ] += 'disconnect' in reason or 'stalls' in reason
         results['timelosses'] += 'on time' in reason
         results['illegals'  ] += 'illegal' in reason
 
-        # Parse Game # and result, and save
-        game, result = parse_finished_game(line)
+        # 局番号と Dev 視点の結果を保存
         results['games'][game] = result
 
         # Check to see if the Pair has finished
@@ -577,8 +562,8 @@ class MatchRunner:
             return
 
         # Get the indices for the Pentanomial, and the two for Trinomial
-        p = pair_to_penta(results['games'][first], results['games'][second])
-        t1, t2 = pair_to_trinomial(results['games'][first], results['games'][second])
+        p = results['games'][first] + results['games'][second]
+        t1, t2 = results['games'][first], results['games'][second]
 
         # Update everything
         results['trinomial'  ][t1] += 1
@@ -588,6 +573,50 @@ class MatchRunner:
         # Clean up results['games']
         del results['games'][first]
         del results['games'][second]
+
+    @staticmethod
+    def parse_finished_game(line):
+
+        def parse_engine_role(name):
+            name = name.strip()
+            if name == 'dev' or name.endswith('-dev'):
+                return 'dev'
+            if name == 'base' or name.endswith('-base'):
+                return 'base'
+            raise ValueError('Unable to identify engine role in result line: %s' % (line))
+
+        def dev_result(white, black, result):
+            white_role = parse_engine_role(white)
+            black_role = parse_engine_role(black)
+
+            if {white_role, black_role} != {'dev', 'base'}:
+                raise ValueError('Unable to identify dev/base pairing in result line: %s' % (line))
+
+            if result == '1/2-1/2':
+                return 1
+            if result == '1-0':
+                return 2 if white_role == 'dev' else 0
+            if result == '0-1':
+                return 2 if black_role == 'dev' else 0
+
+            raise ValueError('Unable to convert result to dev perspective: %s' % (line))
+
+        match = re.match(
+            r'^Finished game\s+'
+            r'(?P<game>[0-9]+)'
+            r'(?:\s+of\s+(?:[0-9]+|infinite))?'
+            r'\s+\((?P<white>.*?)\s+vs\s+(?P<black>.*?)\):\s+'
+            r'(?P<result>1-0|0-1|1/2-1/2|undetermined)'
+            r'\s+\{(?P<reason>.*)\}\s*$',
+            line.strip())
+
+        if not match:
+            raise ValueError('Unable to parse match runner result line: %s' % (line))
+
+        return (
+            int(match.group('game')),
+            dev_result(match.group('white'), match.group('black'), match.group('result')),
+            match.group('reason'))
 
     @staticmethod
     def kill_everything(dev_process, base_process):
