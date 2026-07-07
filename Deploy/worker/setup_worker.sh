@@ -28,6 +28,10 @@ SHOGIBENCH_SOCKETS="${SHOGIBENCH_SOCKETS:-1}"
 
 export DEBIAN_FRONTEND=noninteractive
 
+# Stream the client's output into the log as it happens. Piped Python
+# buffers stdout otherwise, which makes a healthy worker look silent
+export PYTHONUNBUFFERED=1
+
 SUDO=""
 if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null; then
     SUDO="sudo"
