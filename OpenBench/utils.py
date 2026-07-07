@@ -190,6 +190,17 @@ def getRecentMachines(minutes=5):
     target = target - datetime.timedelta(minutes=minutes)
     return Machine.objects.filter(updated__gte=target)
 
+def machine_key_revoked(machine):
+
+    ## True when the Worker Key that opened this machine's session has
+    ## since been deleted or disabled. Sessions opened with an account
+    ## password record no key and never revoke this way.
+
+    key_id = machine.info.get('worker_key_id')
+    if not key_id:
+        return False
+    return not WorkerKey.objects.filter(id=key_id, enabled=True).exists()
+
 def getMachineStatus(username=None):
 
     machines = getRecentMachines()

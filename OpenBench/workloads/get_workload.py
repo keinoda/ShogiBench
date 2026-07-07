@@ -48,8 +48,9 @@ from django.db import transaction
 
 def get_workload(request, machine):
 
-    # Machines stopped from the /workers/ page receive no new work
-    if machine.info.get('stop_requested'):
+    # Machines stopped from the /workers/ page, or whose Worker Key has
+    # since been deleted or disabled, receive no new work
+    if machine.info.get('stop_requested') or OpenBench.utils.machine_key_revoked(machine):
         return {}
 
     # Select a workload from the possible ones, if we can

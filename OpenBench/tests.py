@@ -109,6 +109,7 @@ class WorkerKeyAuthTests(TestCase):
 
     def test_worker_info_accepts_worker_key(self):
         import json
+        from OpenBench.models import Machine
         info = {
             'compilers'   : {}, 'cpu_flags' : [], 'tokens' : {},
             'os_name'     : 'Linux', 'concurrency' : 1,
@@ -120,6 +121,33 @@ class WorkerKeyAuthTests(TestCase):
         data = response.json()
         self.assertIn('machine_id', data)
         self.assertIn('secret', data)
+
+        # The session remembers which key opened it, for later revocation
+        machine = Machine.objects.get(id=data['machine_id'])
+        self.assertEqual(machine.info['worker_key_id'], self.key.id)
+
+    def test_revoked_key_cuts_off_the_session(self):
+        from OpenBench.models import Machine
+        from OpenBench.utils import machine_key_revoked
+        from OpenBench.workloads.get_workload import get_workload
+
+        machine = Machine.objects.create(
+            user=self.user, info={ 'worker_key_id' : self.key.id })
+        self.assertFalse(machine_key_revoked(machine))
+
+        # Disabling the key revokes the session
+        self.key.enabled = False
+        self.key.save()
+        self.assertTrue(machine_key_revoked(machine))
+        self.assertEqual(get_workload(None, machine), {})
+
+        # Deleting it likewise
+        self.key.delete()
+        self.assertTrue(machine_key_revoked(machine))
+
+        # Password-opened sessions record no key and never revoke this way
+        legacy = Machine.objects.create(user=self.user, info={})
+        self.assertFalse(machine_key_revoked(legacy))
 
 class InviteOnlyRegistrationTests(TestCase):
 

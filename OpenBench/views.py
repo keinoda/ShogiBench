@@ -1117,6 +1117,13 @@ def client_worker_info(request):
     # Note the Config checksum at the time of init, in case it changes
     machine.info['OPENBENCH_CONFIG_CHECKSUM'] = OPENBENCH_CONFIG_CHECKSUM
 
+    # Remember which Worker Key opened this session: requests after init
+    # authenticate with the session secret only, so this is what lets a
+    # deleted or disabled key actually cut a running session off
+    key = WorkerKey.objects.filter(
+        token=(request.POST.get('password') or '').strip(), user=user).first()
+    machine.info['worker_key_id'] = key.id if key else None
+
     # Tag engines that the Machine can build and/or run with binaries
     machine.info['supported'] = []
     for engine, data in OPENBENCH_CONFIG['engines'].items():
@@ -1225,8 +1232,9 @@ def client_submit_results(request, machine):
     # Returns {}, or { 'stop' : True }
     response = OpenBench.utils.update_test(request, machine)
 
-    # Stops requested from the /workers/ page abort the current games
-    if machine.info.get('stop_requested'):
+    # Stops requested from the /workers/ page, and revoked Worker Keys,
+    # abort the current games
+    if machine.info.get('stop_requested') or OpenBench.utils.machine_key_revoked(machine):
         response['stop'] = True
 
     return JsonResponse(response)
@@ -1238,8 +1246,9 @@ def client_heartbeat(request, machine):
     # Force a refresh of the updated timestamp
     machine.save()
 
-    # Stops requested from the /workers/ page abort the current games
-    if machine.info.get('stop_requested'):
+    # Stops requested from the /workers/ page, and revoked Worker Keys,
+    # abort the current games
+    if machine.info.get('stop_requested') or OpenBench.utils.machine_key_revoked(machine):
         return JsonResponse({ 'stop' : True })
 
     # Include a 'stop' header iff the test was finished
