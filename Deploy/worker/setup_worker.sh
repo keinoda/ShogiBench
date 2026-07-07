@@ -44,47 +44,80 @@ for pid in $(pgrep -f '[s]hogibench_setup.sh|[s]etup_worker.sh' 2>/dev/null || t
 done
 pkill -f '[c]lient.py' 2>/dev/null || true
 
-# Install only the packages that are missing
-PKGS=""
-command -v git     >/dev/null || PKGS="$PKGS git"
-command -v curl    >/dev/null || PKGS="$PKGS curl"
-command -v make    >/dev/null || PKGS="$PKGS make"
-command -v g++     >/dev/null || PKGS="$PKGS g++"
-command -v python3 >/dev/null || PKGS="$PKGS python3"
-command -v pip3    >/dev/null || PKGS="$PKGS python3-pip"
-command -v pgrep   >/dev/null || PKGS="$PKGS procps"
-command -v python  >/dev/null || PKGS="$PKGS python-is-python3"
+# A single failed apt/rustup call must not abort the whole bootstrap and
+# leave nothing registered; from here we handle errors ourselves and
+# retry, so a transient network hiccup self-heals instead of wedging.
+set +e
 
-if [ -n "$PKGS" ]; then
-    $SUDO apt-get update -y
-    $SUDO apt-get install -y --no-install-recommends $PKGS
-fi
+clang_major() {
+    command -v clang++ >/dev/null || { echo 0; return; }
+    clang++ --version | grep -oE 'version [0-9]+' | grep -oE '[0-9]+' | head -1
+}
 
-# The engines require clang++ >= 16, newer than many distro defaults
-# (Ubuntu 22.04 ships clang 14). Pull a modern one from apt.llvm.org and
-# shadow the distro binaries via /usr/local/bin, which precedes them
-CLANG_VER=$(command -v clang++ >/dev/null && clang++ --version | grep -oE 'version [0-9]+' | grep -oE '[0-9]+' | head -1 || echo 0)
-if [ "${CLANG_VER:-0}" -lt 16 ]; then
-    echo "[setup_worker] clang++ >= 16 required (found: ${CLANG_VER:-none}), installing clang-18"
-    $SUDO apt-get update -y
-    $SUDO apt-get install -y --no-install-recommends lsb-release wget gnupg software-properties-common
-    curl -sSf https://apt.llvm.org/llvm.sh | $SUDO bash -s -- 18
-    $SUDO ln -sf "$(command -v clang++-18)" /usr/local/bin/clang++
-    $SUDO ln -sf "$(command -v clang-18)"   /usr/local/bin/clang
-fi
+install_toolchain() {
 
-# Rust toolchain, required to build the shogitest match runner. Distro
-# packages are often too old, so install via rustup when missing.
-if [ -f "$HOME/.cargo/env" ]; then
-    . "$HOME/.cargo/env"
-fi
+    # Install only the packages that are missing
+    PKGS=""
+    command -v git     >/dev/null || PKGS="$PKGS git"
+    command -v curl    >/dev/null || PKGS="$PKGS curl"
+    command -v make    >/dev/null || PKGS="$PKGS make"
+    command -v g++     >/dev/null || PKGS="$PKGS g++"
+    command -v python3 >/dev/null || PKGS="$PKGS python3"
+    command -v pip3    >/dev/null || PKGS="$PKGS python3-pip"
+    command -v pgrep   >/dev/null || PKGS="$PKGS procps"
+    command -v python  >/dev/null || PKGS="$PKGS python-is-python3"
 
-if ! command -v cargo >/dev/null; then
-    curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-    . "$HOME/.cargo/env"
-fi
+    if [ -n "$PKGS" ]; then
+        $SUDO apt-get update -y
+        $SUDO apt-get install -y --no-install-recommends $PKGS
+    fi
 
-export PATH="$HOME/.cargo/bin:$PATH"
+    # The engines require clang++ >= 16, newer than many distro defaults
+    # (Ubuntu 22.04 ships clang 14). Pull a modern one from apt.llvm.org
+    # and shadow the distro binaries via /usr/local/bin, which precedes them
+    if [ "$(clang_major)" -lt 16 ]; then
+        echo "[setup_worker] clang++ >= 16 required (found: $(clang_major)), installing clang-18"
+        $SUDO apt-get update -y
+        $SUDO apt-get install -y --no-install-recommends lsb-release wget gnupg software-properties-common
+        curl -sSf https://apt.llvm.org/llvm.sh | $SUDO bash -s -- 18
+        [ -x "$(command -v clang++-18)" ] && $SUDO ln -sf "$(command -v clang++-18)" /usr/local/bin/clang++
+        [ -x "$(command -v clang-18)"   ] && $SUDO ln -sf "$(command -v clang-18)"   /usr/local/bin/clang
+    fi
+
+    # Rust toolchain, required to build the shogitest match runner. Distro
+    # packages are often too old, so install via rustup when missing.
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    if ! command -v cargo >/dev/null; then
+        curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+        [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    fi
+    export PATH="$HOME/.cargo/bin:$PATH"
+}
+
+# Everything the client hard-requires at startup. If any is missing the
+# client exits before it ever registers, so verify before launching it.
+toolchain_ready() {
+    command -v make  >/dev/null || { echo "make missing";        return 1; }
+    command -v cargo >/dev/null || { echo "cargo missing";        return 1; }
+    { command -v g++ >/dev/null || command -v clang++ >/dev/null; } \
+                                || { echo "C++ compiler missing"; return 1; }
+    [ "$(clang_major)" -ge 16 ] || { echo "clang++ >= 16 missing (engines need it)"; return 1; }
+    return 0
+}
+
+# Install, retrying with backoff. A first attempt often fails on a slow
+# mirror; without this the worker would spin forever on a broken toolchain.
+ATTEMPT=1
+while :; do
+    install_toolchain
+    if reason=$(toolchain_ready); then
+        echo "[setup_worker] Toolchain ready"
+        break
+    fi
+    echo "[setup_worker] Toolchain incomplete ($reason); retry $ATTEMPT in 15s"
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 15
+done
 
 # Normalize the server URL: an http:// URL gets 301-redirected to https,
 # which turns the client's POSTs into empty GETs and breaks authentication.
@@ -123,9 +156,21 @@ cd "$SHOGIBENCH_DIR/Client"
 pip3 install --break-system-packages -r requirements.txt 2>/dev/null \
     || pip3 install -r requirements.txt
 
-# Keep the worker alive across transient failures
+# Keep the worker alive across transient failures. If the client dies
+# almost immediately it is a misconfiguration (a missing tool it checks
+# at startup), not a transient error, so re-run the toolchain install to
+# self-heal instead of spinning forever on the same broken state.
 while true; do
+    STARTED=$(date +%s)
     python3 client.py -T "$SHOGIBENCH_THREADS" -N "$SHOGIBENCH_SOCKETS" || true
+    RAN=$(( $(date +%s) - STARTED ))
+
+    if [ "$RAN" -lt 10 ]; then
+        echo "[setup_worker] client exited after ${RAN}s (startup failure); re-checking toolchain"
+        install_toolchain
+        toolchain_ready || echo "[setup_worker] toolchain still incomplete: $(toolchain_ready)"
+    fi
+
     echo "[setup_worker] client exited, restarting in 15s"
     sleep 15
 done
