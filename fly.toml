@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for shogibench on 2026-07-06T03:49:28Z
+# fly.toml app configuration file generated for shogibench on 2026-07-07T11:58:20+09:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -24,9 +24,6 @@ primary_region = 'nrt'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  # Keep one machine always on: Fly stopping the machine mid-request breaks
-  # interactive actions like the SSH worker bootstrap. Set back to 0 if you
-  # prefer scale-to-zero and can live with cold starts.
   min_machines_running = 1
 
 [[vm]]
