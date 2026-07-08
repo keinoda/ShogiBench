@@ -136,6 +136,12 @@ def workload_uses_time_based_tc(workload):
 
 
 def read_git_credentials(engine):
+    env_token = os.environ.get('OPENBENCH_GITHUB_TOKEN', '').strip()
+    if env_token:
+        lower = env_token.lower()
+        prefix = '' if lower.startswith(('token ', 'bearer ')) else 'Bearer '
+        return { 'Authorization' : '%s%s' % (prefix, env_token) }
+
     fname = 'credentials.%s' % (engine.replace(' ', '').lower())
     fpath = os.path.join(PROJECT_PATH, 'Config', fname)
     if os.path.exists(fpath):

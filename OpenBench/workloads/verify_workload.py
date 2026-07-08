@@ -36,6 +36,7 @@
 #   >>> errors, engine_info = verify_workload(request, 'DATAGEN')
 #   >>> dev_info, base_info = engine_info
 
+import datetime
 import os
 import re
 import requests
@@ -45,6 +46,37 @@ import OpenBench.config
 import OpenBench.utils
 
 from OpenBench.models import *
+
+class GithubAPIError(Exception):
+    pass
+
+def github_json(response, branch):
+
+    try: data = response.json()
+    except:
+        raise GithubAPIError('GitHub API returned a non-JSON response while checking %s' % (branch or 'Branch'))
+
+    message = data.get('message', 'HTTP %d' % response.status_code) if isinstance(data, dict) else 'HTTP %d' % response.status_code
+
+    if response.status_code == 404:
+        raise GithubAPIError('%s could not be found' % (branch or 'Branch'))
+
+    if response.status_code == 403 and response.headers.get('x-ratelimit-remaining') == '0':
+        reset = response.headers.get('x-ratelimit-reset')
+        retry = ''
+        if reset:
+            try:
+                when = datetime.datetime.fromtimestamp(int(reset), datetime.timezone.utc)
+                retry = ' Retry after %s UTC.' % when.strftime('%Y-%m-%d %H:%M:%S')
+            except: pass
+        raise GithubAPIError(
+            'GitHub API rate limit exceeded while checking %s.%s Configure OPENBENCH_GITHUB_TOKEN for authenticated requests.'
+            % (branch or 'Branch', retry))
+
+    if response.status_code >= 400:
+        raise GithubAPIError('GitHub API error while checking %s: %s' % (branch or 'Branch', message))
+
+    return data
 
 def verify_workload(request, workload_type):
 
@@ -400,7 +432,7 @@ def collect_github_info(errors, request, field):
     base    = request.POST['%s_repo' % (field)].replace('github.com', 'api.github.com/repos')
     engine  = request.POST['%s_engine' % (field)]
     private = OpenBench.config.OPENBENCH_CONFIG['engines'][engine]['private']
-    headers = {}
+    headers = OpenBench.utils.read_git_credentials(engine) or {}
 
     ## Step 1: Verify the target of the API requests
     ## [A] We will not attempt to reach any site other than api.github.com
@@ -408,7 +440,7 @@ def collect_github_info(errors, request, field):
     ## [C] Determine which, if any, credentials we want to pass along
 
     # Private engines must have a token stored in credentials.enginename
-    if private and not (headers := OpenBench.utils.read_git_credentials(engine)):
+    if private and not headers:
         errors.append('Server does not have access tokens for this engine')
         return (None, None)
 
@@ -435,12 +467,12 @@ def collect_github_info(errors, request, field):
 
         # Lookup branch or commit sha, but will fail for tags
         url  = OpenBench.utils.path_join(base, 'commits' if bysha else 'branches', branch)
-        data = requests.get(url, headers=headers).json()
+        data = github_json(requests.get(url, headers=headers), branch)
 
         # Check to see if the branch name was actually a tag name
         if not bysha and 'commit' not in data:
             url  = OpenBench.utils.path_join(base, 'commits', branch)
-            data = requests.get(url, headers=headers).json()
+            data = github_json(requests.get(url, headers=headers), branch)
 
         # Actual branches have to go one layer deeper
         elif not bysha: data = data['commit']
@@ -448,6 +480,10 @@ def collect_github_info(errors, request, field):
         # Check that all the data we need going forward is present
         assert 'message' in data['commit'] and 'sha' in data
         assert private or 'sha' in data['commit']['tree']
+
+    except GithubAPIError as error:
+        errors.append(str(error))
+        return (None, None)
 
     except: # Unable to find for whatever reason
         traceback.print_exc()

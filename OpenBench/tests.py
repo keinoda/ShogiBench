@@ -24,6 +24,7 @@ from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 
 import hashlib
+import os
 import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -32,6 +33,7 @@ from django.test import override_settings
 from OpenBench.models import BuildVariant, Engine, Network, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
+from OpenBench.workloads.verify_workload import collect_github_info
 
 TEST_SSH_KEY = None
 
@@ -148,6 +150,64 @@ class WorkerKeyAuthTests(TestCase):
         # Password-opened sessions record no key and never revoke this way
         legacy = Machine.objects.create(user=self.user, info={})
         self.assertFalse(machine_key_revoked(legacy))
+
+class GithubLookupTests(TestCase):
+
+    class FakeRequest:
+        POST = {
+            'dev_branch' : 'suisho11-tuned',
+            'dev_bench'  : '0',
+            'dev_engine' : 'YaneuraOu-nagisa',
+            'dev_repo'   : 'https://github.com/keinoda/YaneuraOu',
+        }
+
+    class FakeResponse:
+        def __init__(self, status_code, data, headers=None):
+            self.status_code = status_code
+            self._data = data
+            self.headers = headers or {}
+
+        def json(self):
+            return self._data
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_public_engine_uses_configured_github_token(self, mock_get):
+        mock_get.return_value = self.FakeResponse(200, {
+            'commit' : {
+                'sha'    : 'a' * 40,
+                'commit' : {
+                    'message' : 'bench not required',
+                    'tree'    : { 'sha' : 'b' * 40 },
+                },
+            },
+        })
+
+        errors = []
+        info, has_all = collect_github_info(errors, self.FakeRequest(), 'dev')
+
+        self.assertEqual(errors, [])
+        self.assertTrue(has_all)
+        self.assertEqual(info[1], 'suisho11-tuned')
+        self.assertEqual(mock_get.call_args.kwargs['headers'], {
+            'Authorization' : 'Bearer test-token',
+        })
+
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_github_rate_limit_is_reported_directly(self, mock_get):
+        mock_get.return_value = self.FakeResponse(
+            403,
+            { 'message' : 'API rate limit exceeded for 79.127.159.112.' },
+            { 'x-ratelimit-remaining' : '0', 'x-ratelimit-reset' : '1783495254' },
+        )
+
+        errors = []
+        info = collect_github_info(errors, self.FakeRequest(), 'dev')
+
+        self.assertEqual(info, (None, None))
+        self.assertEqual(len(errors), 1)
+        self.assertIn('GitHub API rate limit exceeded', errors[0])
+        self.assertIn('OPENBENCH_GITHUB_TOKEN', errors[0])
 
 class InviteOnlyRegistrationTests(TestCase):
 
