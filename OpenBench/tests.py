@@ -278,6 +278,40 @@ class InviteOnlyRegistrationTests(TestCase):
             'password1' : 'hunter22', 'password2' : 'hunter22' })
         self.assertFalse(User.objects.filter(username='mallory').exists())
 
+class ProfileConfigTests(TestCase):
+
+    def test_approver_can_add_engine_repository(self):
+        user = User.objects.create_user('approver', 'a@example.com', 'account-password')
+        Profile.objects.create(user=user, enabled=True, approver=True)
+        self.client.login(username='approver', password='account-password')
+
+        self.client.post('/profileConfig/', {
+            'new-engine-name' : 'YaneuraOu',
+            'new-engine-repo' : 'https://github.com/example/YaneuraOu',
+            'deleted-repos'   : '[]',
+        })
+
+        profile = Profile.objects.get(user=user)
+        self.assertEqual(profile.engine, 'YaneuraOu')
+        self.assertEqual(profile.repos, {
+            'YaneuraOu' : 'https://github.com/example/YaneuraOu',
+        })
+
+    def test_disabled_user_cannot_add_engine_repository(self):
+        user = User.objects.create_user('disabled', 'd@example.com', 'account-password')
+        Profile.objects.create(user=user, enabled=False, approver=True)
+        self.client.login(username='disabled', password='account-password')
+
+        self.client.post('/profileConfig/', {
+            'new-engine-name' : 'YaneuraOu',
+            'new-engine-repo' : 'https://github.com/example/YaneuraOu',
+            'deleted-repos'   : '[]',
+        })
+
+        profile = Profile.objects.get(user=user)
+        self.assertEqual(profile.engine, '')
+        self.assertEqual(profile.repos, {})
+
 class WorkerKeyPageTests(TestCase):
 
     def setUp(self):

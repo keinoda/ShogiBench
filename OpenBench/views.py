@@ -269,6 +269,9 @@ def profile_config(request):
     if not (profile := Profile.objects.filter(user=request.user).first()):
         return redirect(request, 'index')
 
+    if not profile.enabled:
+        return redirect(request, '/profile/', error=ERROR_MESSAGES['disabled'])
+
     if request.method == 'GET':
         return render(request, 'profile.html')
 
