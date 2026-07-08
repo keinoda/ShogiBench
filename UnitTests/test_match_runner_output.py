@@ -1,8 +1,10 @@
 #!/bin/python3
 
 import importlib
+import hashlib
 import os
 import sys
+import tempfile
 import types
 import unittest
 
@@ -85,6 +87,116 @@ class MatchRunnerOutputTests(unittest.TestCase):
         self.assertEqual(results['trinomial'], [2, 0, 0])
         self.assertEqual(results['pentanomial'], [1, 0, 0, 0, 0])
         self.assertEqual(results['games'], {})
+
+
+class StageNetworkOptionsTests(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.worker = import_worker()
+
+    def test_stale_staged_files_are_replaced_by_sha(self):
+        old_cwd = os.getcwd()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            try:
+                os.chdir(tempdir)
+                os.mkdir('Networks')
+
+                network = b'correct-network'
+                progress = b'correct-progress'
+                net_sha = hashlib.sha256(network).hexdigest()[:8].upper()
+                progress_sha = hashlib.sha256(progress).hexdigest()[:8].upper()
+
+                with open(os.path.join('Networks', net_sha), 'wb') as fout:
+                    fout.write(network)
+                with open(os.path.join('Networks', progress_sha), 'wb') as fout:
+                    fout.write(progress)
+
+                staged_dir = os.path.join('Networks', '%s-dir' % (net_sha))
+                os.mkdir(staged_dir)
+                with open(os.path.join(staged_dir, 'nn.bin'), 'wb') as fout:
+                    fout.write(b'stale-network')
+                with open(os.path.join(staged_dir, 'progress.bin'), 'wb') as fout:
+                    fout.write(b'stale-progress')
+
+                config = types.SimpleNamespace(workload={ 'test' : { 'dev' : {
+                    'private'           : False,
+                    'network'           : net_sha,
+                    'build'             : {
+                        'network_option'      : 'EvalDir',
+                        'network_filename'    : 'nn.bin',
+                        'network_aux_options' : { 'progress.bin' : 'LS_PROGRESS_COEFF' },
+                    },
+                    'network_aux_files' : [
+                        { 'name' : 'progress.bin', 'sha' : progress_sha },
+                    ],
+                } } })
+
+                pairs = self.worker.stage_network_options(config, 'dev')
+
+                with open(os.path.join(staged_dir, 'nn.bin'), 'rb') as fin:
+                    self.assertEqual(fin.read(), network)
+                with open(os.path.join(staged_dir, 'progress.bin'), 'rb') as fin:
+                    self.assertEqual(fin.read(), progress)
+
+                abs_dir = os.path.abspath(staged_dir)
+                self.assertIn(('EvalDir', abs_dir), pairs)
+                self.assertIn(('LS_PROGRESS_COEFF', os.path.abspath(os.path.join(staged_dir, 'progress.bin'))), pairs)
+
+            finally:
+                os.chdir(old_cwd)
+
+    def test_eval_options_accepts_space_separator(self):
+        with tempfile.NamedTemporaryFile('w', delete=False) as fout:
+            path = fout.name
+            fout.write('LS_BUCKET_MODE progress8kpabs\n')
+            fout.write('FV_SCALE=28\n')
+
+        try:
+            self.assertEqual(self.worker.parse_eval_options_file(path), [
+                ('LS_BUCKET_MODE', 'progress8kpabs'),
+                ('FV_SCALE', '28'),
+            ])
+        finally:
+            os.remove(path)
+
+    def test_eval_options_managed_path_option_stops_workload(self):
+        old_cwd = os.getcwd()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            try:
+                os.chdir(tempdir)
+                os.mkdir('Networks')
+
+                network = b'correct-network'
+                eval_options = b'LS_PROGRESS_COEFF ./progress.bin\n'
+                net_sha = hashlib.sha256(network).hexdigest()[:8].upper()
+                opts_sha = hashlib.sha256(eval_options).hexdigest()[:8].upper()
+
+                with open(os.path.join('Networks', net_sha), 'wb') as fout:
+                    fout.write(network)
+                with open(os.path.join('Networks', opts_sha), 'wb') as fout:
+                    fout.write(eval_options)
+
+                config = types.SimpleNamespace(workload={ 'test' : { 'dev' : {
+                    'private'           : False,
+                    'network'           : net_sha,
+                    'build'             : {
+                        'network_option'      : 'EvalDir',
+                        'network_filename'    : 'nn.bin',
+                        'network_aux_options' : { 'progress.bin' : 'LS_PROGRESS_COEFF' },
+                    },
+                    'network_aux_files' : [
+                        { 'name' : 'eval_options.txt', 'sha' : opts_sha },
+                    ],
+                } } })
+
+                with self.assertRaises(self.worker.utils.OpenBenchCorruptedNetworkException):
+                    self.worker.stage_network_options(config, 'dev')
+
+            finally:
+                os.chdir(old_cwd)
 
 
 if __name__ == '__main__':

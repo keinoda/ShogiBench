@@ -20,6 +20,7 @@
 
 import argparse
 import cpuinfo
+import hashlib
 import importlib
 import json
 import multiprocessing
@@ -1482,6 +1483,37 @@ def staged_network_dir(config, branch):
         return ''
     return os.path.abspath(os.path.join('Networks', '%s-dir' % (test['network'])))
 
+def file_sha256_prefix(path, length=8):
+
+    hasher = hashlib.sha256()
+    with open(path, 'rb') as fin:
+        while chunk := fin.read(1024 * 1024):
+            hasher.update(chunk)
+    return hasher.hexdigest()[:length].upper()
+
+def stage_hashed_file(source_path, staged_path, expected_sha):
+
+    expected = expected_sha.upper()
+
+    if os.path.exists(staged_path):
+        found = file_sha256_prefix(staged_path, len(expected))
+        if found == expected:
+            return
+        print ('Replacing staged file %s: expected %s, found %s' % (
+            staged_path, expected, found))
+        os.remove(staged_path)
+
+    try:
+        os.link(source_path, staged_path)
+    except OSError:
+        shutil.copyfile(source_path, staged_path)
+
+    found = file_sha256_prefix(staged_path, len(expected))
+    if found != expected:
+        os.remove(staged_path)
+        raise utils.OpenBenchCorruptedNetworkException(
+            'Invalid SHA for staged file %s' % (staged_path))
+
 def stage_network_options(config, branch, prefix=''):
 
     ## Returns [(option, value)] pairs pointing a public engine at its
@@ -1509,9 +1541,7 @@ def stage_network_options(config, branch, prefix=''):
     dir_path = os.path.join('Networks', '%s-dir' % (network))
     os.makedirs(dir_path, exist_ok=True)
     staged = os.path.join(dir_path, net_fname)
-    if not os.path.exists(staged):
-        try: os.link(os.path.join('Networks', network), staged)
-        except OSError: shutil.copyfile(os.path.join('Networks', network), staged)
+    stage_hashed_file(os.path.join('Networks', network), staged, network)
 
     pairs = [(net_option, os.path.abspath(dir_path))]
 
@@ -1527,9 +1557,7 @@ def stage_network_options(config, branch, prefix=''):
     for aux in test.get('network_aux_files', []):
 
         staged_aux = os.path.join(dir_path, aux['name'])
-        if not os.path.exists(staged_aux):
-            try: os.link(os.path.join('Networks', aux['sha']), staged_aux)
-            except OSError: shutil.copyfile(os.path.join('Networks', aux['sha']), staged_aux)
+        stage_hashed_file(os.path.join('Networks', aux['sha']), staged_aux, aux['sha'])
 
         if aux['name'] in aux_options:
             pairs.append((aux_options[aux['name']], os.path.abspath(staged_aux)))
@@ -1539,22 +1567,23 @@ def stage_network_options(config, branch, prefix=''):
 
     # The worker owns the file-location options: an eval_options.txt that
     # tries to override them (eg EvalDir=eval) would silently point the
-    # engine at a nonexistent eval, so those lines are dropped. Path-type
-    # options can reference the staging directory as {DIR}, since its
-    # location is unknowable when the file is written (eg
-    # LS_PROGRESS_COEFF={DIR}/coeff.bin points at a fellow aux file)
+    # engine at a wrong eval, so the workload must stop before launching.
     managed = { name.lower() for name, value in pairs }
+    managed.update({ 'evaldir', 'evalfile', 'ls_progress_coeff', 'progressfilepath' })
+    for option in aux_options.values():
+        managed.add(option.lower())
+
     for name, value in extra_pairs:
         if name.lower() in managed:
-            print ('Ignoring eval_options.txt line: %s is managed by the worker' % (name))
-            continue
+            raise utils.OpenBenchCorruptedNetworkException(
+                'eval_options.txt may not set managed path option %s' % (name))
         pairs.append((name, value.replace('{DIR}', os.path.abspath(dir_path))))
 
     return pairs
 
 def parse_eval_options_file(path):
 
-    ## "Name=Value" lines from a Network's eval_options.txt, applied to
+    ## "Name=Value" or "Name Value" lines from a Network's eval_options.txt, applied to
     ## the engine at both bench and game time. '#' starts a comment.
     ## Values must not contain spaces: the match runner splits on them.
 
@@ -1564,10 +1593,18 @@ def parse_eval_options_file(path):
             line = line.split('#')[0].strip()
             if not line:
                 continue
-            if '=' not in line or ' ' in line:
+            if '=' in line:
+                name, value = line.split('=', 1)
+            elif ' ' in line:
+                name, value = line.split(None, 1)
+            else:
                 print ('Ignoring malformed eval_options.txt line: %s' % (line))
                 continue
-            name, value = line.split('=', 1)
+
+            name, value = name.strip(), value.strip()
+            if not name or not value or ' ' in name or ' ' in value:
+                print ('Ignoring malformed eval_options.txt line: %s' % (line))
+                continue
             pairs.append((name, value))
 
     return pairs

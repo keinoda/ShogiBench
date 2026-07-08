@@ -30,7 +30,7 @@ import tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
-from OpenBench.models import BuildVariant, Engine, Network, Profile, Test, WorkerKey
+from OpenBench.models import BuildVariant, Engine, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
 from OpenBench.workloads.verify_workload import collect_github_info
@@ -427,6 +427,30 @@ class NetworkUploadTests(TestCase):
             response = self.client.post('/api/networks/YaneuraOu-nagisa/%s/aux/eval_options.txt/' % (network.sha256))
             self.assertEqual(b''.join(response.streaming_content), opts)
 
+    def test_upload_rejects_eval_options_managed_path_option(self):
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            response = self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/badopts.bin/', {
+                'netfile'  : SimpleUploadedFile('nn.bin', b'net-content'),
+                'auxfiles' : [SimpleUploadedFile(
+                    'eval_options.txt', b'LS_PROGRESS_COEFF ./progress.bin\n')] }, follow=True)
+
+            self.assertFalse(Network.objects.filter(engine='YaneuraOu-nagisa', name='badopts.bin').exists())
+            self.assertContains(response, 'eval_options.txt may not set LS_PROGRESS_COEFF')
+
+    def test_upload_allows_non_path_eval_options(self):
+        opts = b'LS_BUCKET_MODE progress8kpabs\nFV_SCALE=28\n'
+
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/goodopts.bin/', {
+                'netfile'  : SimpleUploadedFile('nn.bin', b'net-content'),
+                'auxfiles' : [SimpleUploadedFile('eval_options.txt', opts)] })
+
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='goodopts.bin')
+            self.assertEqual(network.aux_files.get(name='eval_options.txt').sha256,
+                             hashlib.sha256(opts).hexdigest()[:8].upper())
+
     def test_aux_add_and_delete_on_edit_page(self):
         with override_settings(MEDIA_ROOT=self.media), \
              patch('OpenBench.utils.MEDIA_ROOT', self.media):
@@ -457,6 +481,29 @@ class NetworkUploadTests(TestCase):
             # The edit page renders the remaining aux file
             response = self.client.get('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256))
             self.assertContains(response, 'eval_options.txt')
+
+    def test_aux_add_rejects_eval_options_managed_path_option(self):
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/rejectedit.bin/', {
+                'netfile' : SimpleUploadedFile('nn.bin', b'net-content') })
+            network = Network.objects.get(engine='YaneuraOu-nagisa', name='rejectedit.bin')
+
+            response = self.client.post('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256), {
+                'action'   : 'aux_add',
+                'auxfiles' : [SimpleUploadedFile(
+                    'eval_options.txt', b'EvalDir=./eval\n')] }, follow=True)
+
+            self.assertFalse(NetworkAuxFile.objects.filter(network=network, name='eval_options.txt').exists())
+            self.assertContains(response, 'eval_options.txt may not set EvalDir')
+
+            response = self.client.post('/networks/YaneuraOu-nagisa/EDIT/%s/' % (network.sha256), {
+                'action'   : 'aux_add',
+                'auxfiles' : [SimpleUploadedFile(
+                    'eval_options.txt', b'ProgressFilePath ./progress.bin\n')] }, follow=True)
+
+            self.assertFalse(NetworkAuxFile.objects.filter(network=network, name='eval_options.txt').exists())
+            self.assertContains(response, 'eval_options.txt may not set ProgressFilePath')
 
     def test_upload_with_legacy_single_aux_field(self):
         with override_settings(MEDIA_ROOT=self.media), \

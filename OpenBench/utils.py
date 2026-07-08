@@ -314,6 +314,60 @@ def network_disambiguate(engine, identifier):
     # No Network exists with engine this Name or Sha
     return None
 
+def managed_eval_option_names(engine):
+
+    build_conf = OPENBENCH_CONFIG['engines'][engine]['build']
+    managed = { 'evaldir', 'evalfile', 'ls_progress_coeff', 'progressfilepath' }
+
+    if build_conf.get('network_option'):
+        managed.add(build_conf['network_option'].lower())
+
+    for option in build_conf.get('network_aux_options', {}).values():
+        managed.add(option.lower())
+
+    return managed
+
+def eval_options_line_name(line):
+
+    line = line.split('#')[0].strip()
+    if not line:
+        return None
+
+    if line.lower().startswith('setoption '):
+        words = line.split()
+        for index, word in enumerate(words[:-1]):
+            if word.lower() == 'name':
+                return words[index + 1]
+        return None
+
+    name = line.split('=', 1)[0] if '=' in line else line.split(None, 1)[0]
+    if name.lower().startswith('option.'):
+        name = name[len('option.'):]
+
+    return name.strip()
+
+def validate_eval_options_aux(engine, aux_name, auxfile):
+
+    if aux_name.lower() != 'eval_options.txt':
+        return None
+
+    data = b''.join(auxfile.chunks())
+    auxfile.seek(0)
+
+    try:
+        text = data.decode('utf-8-sig')
+    except UnicodeDecodeError as error:
+        return 'eval_options.txt must be UTF-8: %s' % (error)
+
+    managed = managed_eval_option_names(engine)
+    for line_no, line in enumerate(text.splitlines(), 1):
+        name = eval_options_line_name(line)
+        if name and name.lower() in managed:
+            return 'eval_options.txt may not set %s on line %d; ShogiBench manages that path option' % (
+                name, line_no)
+
+    return None
+
 def network_upload(request, engine, name):
 
     # Hash the Network in chunks: files can be hundreds of MB, and reading
@@ -353,6 +407,9 @@ def network_upload(request, engine, name):
 
         if aux_name in [existing for existing, _, _ in aux_files]:
             return OpenBench.views.redirect(request, '/networks/', error='Duplicate aux filename %s' % (aux_name))
+
+        if error := validate_eval_options_aux(engine, aux_name, auxfile):
+            return OpenBench.views.redirect(request, '/networks/', error=error)
 
         aux = hashlib.sha256()
         for chunk in auxfile.chunks():
@@ -423,6 +480,9 @@ def network_aux_add(request, engine, network):
 
         if network.aux_files.filter(name=aux_name).exists():
             return OpenBench.views.redirect(request, edit_url, error='%s already exists for this Network' % (aux_name))
+
+        if error := validate_eval_options_aux(engine, aux_name, auxfile):
+            return OpenBench.views.redirect(request, edit_url, error=error)
 
         sha = hashlib.sha256()
         for chunk in auxfile.chunks():
