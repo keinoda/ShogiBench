@@ -20,7 +20,7 @@
 
 from django.db.models import CharField, IntegerField, BigIntegerField, BooleanField, FloatField
 from django.db.models import JSONField, ForeignKey, DateTimeField, OneToOneField, TextField
-from django.db.models import CASCADE, PROTECT, Model, TextChoices
+from django.db.models import CASCADE, PROTECT, Model, TextChoices, Q, UniqueConstraint
 from django.contrib.auth.models import User
 
 import hashlib
@@ -137,6 +137,19 @@ class Machine(Model):
     secret    = CharField(max_length=64, default='None')
     info      = JSONField()
     workload  = IntegerField(default=0)
+
+    # ワーカーが送る永続トークン (Client/.machine_token)。再登録時に同じ行を
+    # 再利用するためのキー。実カラム + 部分 unique 制約にすることで、JSON の
+    # 全行走査なしに引けて、同時登録でも同一トークンの行が重複しない
+    machine_token = CharField(max_length=32, blank=True, default='', db_index=True)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(
+                fields=['user', 'machine_token'],
+                condition=~Q(machine_token=''),
+                name='unique_machine_token_per_user'),
+        ]
 
     def __str__(self):
         return '[%d] %s' % (self.id, self.user.username)

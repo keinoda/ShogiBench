@@ -90,6 +90,37 @@ class WorkerKeyAuthTests(TestCase):
         response = self.client.post('/clientVersionRef/', self.creds())
         self.assertIn('error', response.json())
 
+    def test_deleted_key_signals_shutdown(self):
+
+        # 存在しないトークン形状の資格情報 = 削除済みキー。ワーカーが恒久停止
+        # してよいことを構造化フラグで伝える (文字列一致に頼らない)
+        response = self.client.post('/clientVersionRef/', self.creds(password='b' * 48))
+        self.assertTrue(response.json().get('shutdown'))
+
+    def test_disabled_key_signals_shutdown(self):
+        self.key.enabled = False
+        self.key.save()
+        response = self.client.post('/clientVersionRef/', self.creds())
+        self.assertTrue(response.json().get('shutdown'))
+
+    def test_disabled_profile_does_not_signal_shutdown(self):
+
+        # アカウントの一時無効化は可逆的なので、キーが有効なままなら
+        # ワーカーを恒久停止させない (フラグを立てない)
+        profile = Profile.objects.get(user=self.user)
+        profile.enabled = False
+        profile.save()
+        response = self.client.post('/clientVersionRef/', self.creds())
+        self.assertIn('error', response.json())
+        self.assertNotIn('shutdown', response.json())
+
+    def test_wrong_password_does_not_signal_shutdown(self):
+
+        # パスワード運用 (トークン形状でない) の認証失敗も恒久停止させない
+        response = self.client.post('/clientVersionRef/', self.creds(password='wrong-password'))
+        self.assertIn('error', response.json())
+        self.assertNotIn('shutdown', response.json())
+
     def test_username_match_is_case_insensitive(self):
         response = self.client.post('/clientVersionRef/', self.creds(username='Alice'))
         self.assertIn('client_version', response.json())
@@ -142,12 +173,14 @@ class WorkerKeyAuthTests(TestCase):
         self.key.enabled = False
         self.key.save()
         self.assertTrue(machine_key_revoked(machine))
-        self.assertEqual(get_workload(None, machine), { 'error' : SHUTDOWN_ERROR })
+        self.assertEqual(get_workload(None, machine),
+                         { 'error' : SHUTDOWN_ERROR, 'shutdown' : True })
 
         # Deleting it likewise
         self.key.delete()
         self.assertTrue(machine_key_revoked(machine))
-        self.assertEqual(get_workload(None, machine), { 'error' : SHUTDOWN_ERROR })
+        self.assertEqual(get_workload(None, machine),
+                         { 'error' : SHUTDOWN_ERROR, 'shutdown' : True })
 
         # Password-opened sessions record no key and never revoke this way
         legacy = Machine.objects.create(user=self.user, info={})
@@ -163,6 +196,22 @@ class WorkerKeyAuthTests(TestCase):
         machine = Machine.objects.create(
             user=self.user, info={ 'worker_key_id' : self.key.id, 'stop_requested' : True })
         self.assertEqual(get_workload(None, machine), {})
+
+    def test_stopped_machine_still_hears_revocation(self):
+
+        # 停止 → キー無効化 (UI が長期停止で推奨する手順) でも失効通知が届く。
+        # stop_requested を先に判定すると {} を返し続けて exit 66 が永遠に
+        # 届かず、借りたインスタンスが止まらない
+        from OpenBench.models import Machine
+        from OpenBench.workloads.get_workload import get_workload, SHUTDOWN_ERROR
+
+        machine = Machine.objects.create(
+            user=self.user, info={ 'worker_key_id' : self.key.id, 'stop_requested' : True })
+
+        self.key.enabled = False
+        self.key.save()
+        self.assertEqual(get_workload(None, machine),
+                         { 'error' : SHUTDOWN_ERROR, 'shutdown' : True })
 
     def register(self, token=None, name='test'):
         import json
@@ -206,6 +255,60 @@ class WorkerKeyAuthTests(TestCase):
         second = self.register()
         self.assertNotEqual(first['machine_id'], second['machine_id'])
         self.assertEqual(Machine.objects.filter(user=self.user).count(), 2)
+
+    def test_reregistration_clears_stale_workload(self):
+
+        # 再利用した行に前セッションの workload が残ると、「そのテストを
+        # まだ抱えている最近のマシン」に見えて SPSA の再割当や PGN API を
+        # ブロックするので、登録時に必ずクリアする
+        from OpenBench.models import Machine
+
+        first   = self.register(token='c' * 32)
+        machine = Machine.objects.get(id=first['machine_id'])
+        machine.workload = 42
+        machine.save()
+
+        self.register(token='c' * 32)
+        machine.refresh_from_db()
+        self.assertEqual(machine.workload, 0)
+
+    def test_token_is_stored_on_the_column(self):
+
+        # machine_token は実カラムに載る (JSON 全行走査や重複行を防ぐ)
+        from OpenBench.models import Machine
+
+        data    = self.register(token='d' * 32)
+        machine = Machine.objects.get(id=data['machine_id'])
+        self.assertEqual(machine.machine_token, 'd' * 32)
+
+    def test_legacy_json_token_rows_are_adopted(self):
+
+        # 旧サーバ時代の行 (カラム空、JSON にだけトークン) も再利用され、
+        # 以後はカラムに引き継がれる
+        from OpenBench.models import Machine
+
+        legacy = Machine.objects.create(
+            user=self.user, info={ 'machine_token' : 'e' * 32 })
+        data = self.register(token='e' * 32)
+
+        self.assertEqual(data['machine_id'], legacy.id)
+        legacy.refresh_from_db()
+        self.assertEqual(legacy.machine_token, 'e' * 32)
+
+    def test_duplicate_token_rows_are_rejected_by_the_database(self):
+
+        # 同時登録の競合は DB の部分 unique 制約が最後の砦になる
+        from django.db import IntegrityError, transaction
+        from OpenBench.models import Machine
+
+        Machine.objects.create(user=self.user, info={}, machine_token='f' * 32)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Machine.objects.create(user=self.user, info={}, machine_token='f' * 32)
+
+        # カラムが空の行 (旧クライアント) は何行あってもよい
+        Machine.objects.create(user=self.user, info={})
+        Machine.objects.create(user=self.user, info={})
 
 class GithubLookupTests(TestCase):
 

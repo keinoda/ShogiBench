@@ -320,6 +320,29 @@ def stop_spsa_process(pid, engine_binary):
     if engine_binary:
         utils.kill_process_by_name(engine_binary)
 
+def stop_all_running_spsa():
+
+    ## 走っている spsa を run dir 総当たりで止める。ワーカーの恒久停止
+    ## (キー失効 / openbench.exit) 時に呼ばれ、detached で生き残った
+    ## チューナーとそのエンジンが孤児として回り続けるのを防ぐ
+
+    stopped = 0
+
+    if not os.path.isdir(SPSA_DIR):
+        return stopped
+
+    for name in os.listdir(SPSA_DIR):
+
+        run_dir = os.path.abspath(os.path.join(SPSA_DIR, name, 'run'))
+        pid     = find_running_spsa(run_dir)
+
+        if pid is not None:
+            print ('[Note] Stopping detached SPSA run %s (pid %d) before shutdown' % (name, pid))
+            stop_spsa_process(pid, None)
+            stopped += 1
+
+    return stopped
+
 
 ## 起動モードの決定
 

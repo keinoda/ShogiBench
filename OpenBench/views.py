@@ -43,7 +43,7 @@ from OpenBench.models import *
 from django.contrib.auth.models import User
 from OpenSite.settings import MEDIA_ROOT
 
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import F, Q
 from django.http import HttpResponse, JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -184,6 +184,41 @@ def client_authenticate(request):
         raise UnableToAuthenticate()
 
     return user
+
+def credentials_look_revoked(username, token):
+
+    ## 認証失敗のうち「ワーカーキーが無効化/削除された」(恒久的、ワーカーは
+    ## 自己終了してよい) と、パスワード変更やアカウントの一時無効化など
+    ## 可逆的な失敗を区別する。ワーカーキーのトークン形状 (token_hex(24))
+    ## の資格情報だけを対象にするので、パスワード運用のワーカーは対象外
+
+    token = (token or '').strip()
+
+    if not re.match(r'^[0-9a-f]{48}$', token):
+        return False # アカウントパスワードでの失敗 (可逆的)
+
+    key = WorkerKey.objects.filter(token=token).first()
+
+    if key is None:
+        return True # キーが削除済み
+
+    if not key.enabled:
+        return True # キーが無効化済み
+
+    return False # キー自体は有効 = アカウント側の一時的な問題 (可逆的)
+
+def bad_credentials_response(request):
+
+    ## 'Bad Credentials' 応答。キーの無効化/削除が原因のときだけ構造化フラグ
+    ## 'shutdown' を立てる。ワーカーはこのフラグを見たときのみ exit 66 で
+    ## 恒久停止する (文字列一致ではないので、可逆的な認証失敗を巻き込まない)
+
+    response = { 'error' : 'Bad Credentials' }
+
+    if credentials_look_revoked(request.POST.get('username'), request.POST.get('password')):
+        response['shutdown'] = True
+
+    return JsonResponse(response)
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                            ADMINISTRATIVE VIEWS                             #
@@ -1265,7 +1300,7 @@ def client_version_ref(request):
     # Verify the User's credentials or Worker Key
     try: user = client_authenticate(request)
     except UnableToAuthenticate:
-        return JsonResponse({ 'error' : 'Bad Credentials' })
+        return bad_credentials_response(request)
 
     # Enough information to download the right Client
     return JsonResponse({
@@ -1280,7 +1315,7 @@ def client_match_runner_version_ref(request):
     # Verify the User's credentials or Worker Key
     try: user = client_authenticate(request)
     except UnableToAuthenticate:
-        return JsonResponse({ 'error' : 'Bad Credentials' })
+        return bad_credentials_response(request)
 
     # Enough information to build the right Fastchess version
     return JsonResponse({
@@ -1315,24 +1350,37 @@ def client_worker_info(request):
     # Verify the User's credentials or Worker Key
     try: user = client_authenticate(request)
     except UnableToAuthenticate:
-        return JsonResponse({ 'error' : 'Bad Credentials' })
+        return bad_credentials_response(request)
 
     # Create a new Machine for this session. If the worker sent its stable
     # per-instance token, reuse the existing row instead: re-registration
     # (crash loops, client updates) must not multiply the machine list
     info    = json.loads(request.POST['system_info'])
+    token   = info.get('machine_token') or ''
     machine = None
 
-    if (token := info.get('machine_token')):
+    if token:
         machine = Machine.objects.filter(
-            user=user, info__machine_token=token).order_by('-id').first()
+            user=user, machine_token=token).order_by('-id').first()
+
+        # 旧サーバ時代の行はカラムが空で JSON にだけトークンがあるので、
+        # 一度だけそちらからも引き継ぐ (以後はカラムに載る)
+        if machine is None:
+            machine = Machine.objects.filter(
+                user=user, info__machine_token=token).order_by('-id').first()
 
     if machine is None:
         machine = OpenBench.utils.get_machine('None', user, info)
 
     # Save the machine's latest information and Secret Token for this session
-    machine.info   = info
-    machine.secret = secrets.token_hex(32)
+    machine.info          = info
+    machine.secret        = secrets.token_hex(32)
+    machine.machine_token = token
+
+    # 再利用した行の workload は前セッションの値。残すと「そのテストを
+    # まだ抱えている最近のマシン」に見え、SPSA の再割当や PGN API を
+    # 数分間ブロックしてしまうのでクリアする
+    machine.workload = 0
 
     # Note the Config checksum at the time of init, in case it changes
     machine.info['OPENBENCH_CONFIG_CHECKSUM'] = OPENBENCH_CONFIG_CHECKSUM
@@ -1367,8 +1415,20 @@ def client_worker_info(request):
         # All requirements are met, and this Machine can play with the given engine
         machine.info['supported'].append(engine)
 
-    # Finish up
-    machine.save()
+    # Finish up. Two simultaneous first registrations with the same token can
+    # race past the lookup above; the unique constraint turns the loser's
+    # INSERT into an IntegrityError, and the loser adopts the winner's row
+    try:
+        with transaction.atomic():
+            machine.save()
+    except IntegrityError:
+        winner = Machine.objects.filter(
+            user=user, machine_token=token).order_by('-id').first()
+        winner.info     = machine.info
+        winner.secret   = machine.secret
+        winner.workload = 0
+        machine = winner
+        machine.save()
 
     # Pass back the Machine Id, and Secret Token for this session
     return JsonResponse({ 'machine_id' : machine.id, 'secret' : machine.secret })

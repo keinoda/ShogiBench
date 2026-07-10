@@ -49,16 +49,18 @@ SHUTDOWN_ERROR = 'Worker key disabled or deleted. Shut down.'
 
 def get_workload(request, machine):
 
+    # A deleted or disabled Worker Key is permanent: tell the worker
+    # explicitly so it can shut itself down (including its restart wrapper),
+    # instead of polling forever with dead credentials. This must precede
+    # stop_requested: a machine stopped from /workers/ and revoked later
+    # would otherwise idle forever without ever hearing about the revocation
+    if OpenBench.utils.machine_key_revoked(machine):
+        return { 'error' : SHUTDOWN_ERROR, 'shutdown' : True }
+
     # Machines stopped from the /workers/ page receive no new work, but may
     # be resumed later, so the worker just keeps idling
     if machine.info.get('stop_requested'):
         return {}
-
-    # A deleted or disabled Worker Key is permanent: tell the worker
-    # explicitly so it can shut itself down (including its restart wrapper),
-    # instead of polling forever with dead credentials
-    if OpenBench.utils.machine_key_revoked(machine):
-        return { 'error' : SHUTDOWN_ERROR }
 
     # Select a workload from the possible ones, if we can
     if not (test := select_workload(request, machine)):

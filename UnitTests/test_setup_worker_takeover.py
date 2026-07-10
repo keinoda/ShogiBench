@@ -199,6 +199,72 @@ class SetupWorkerTakeoverTests(unittest.TestCase):
         result = self.run_takeover()
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def neutral_python(self):
+
+        # 「無関係なプロセス」役は、パスに shogibench を含まないインタプリタで
+        # 起動する (テスト実行環境の venv パスには ShogiBench が含まれ得るため)
+        for path in ['/usr/bin/python3', '/bin/python3']:
+            if os.path.exists(path):
+                return path
+        self.skipTest('no system python3 outside the venv')
+
+    def test_unrelated_client_py_survives_takeover(self):
+
+        # 無関係なプロジェクトのたまたま同名の client.py (cmdline にも cwd にも
+        # shogibench を含まない) は巻き込まない
+        python = self.neutral_python()
+        other  = tempfile.mkdtemp(prefix='otherproj-')
+        try:
+            client = os.path.join(other, 'client.py')
+            with open(client, 'w') as fout:
+                fout.write('import time\ntime.sleep(300)\n')
+
+            proc = subprocess.Popen(
+                [python, client], cwd=other, start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.procs.append(proc)
+            time.sleep(0.5)
+            self.assertTrue(pid_alive(proc.pid))
+
+            result = self.run_takeover()
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            time.sleep(1.0)
+            self.assertIsNone(proc.poll(), 'unrelated client.py was killed by takeover')
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+
+    def test_stale_pidfile_of_recycled_pgid_is_ignored(self):
+
+        # 再起動後の pid 再利用を模擬: pidfile が無関係なプロセス群を指して
+        # いたら、殺さずに stale な記録として捨てる。グループ内にたまたま
+        # client.py という名前のスクリプトがいても worker とは見なさない
+        python = self.neutral_python()
+        other  = tempfile.mkdtemp(prefix='otherproj-')
+        try:
+            with open(os.path.join(other, 'client.py'), 'w') as fout:
+                fout.write('import time\ntime.sleep(300)\n')
+
+            proc = subprocess.Popen(
+                ['bash', '-c', '"%s" client.py & wait' % (python)],
+                cwd=other, start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.procs.append(proc)
+            time.sleep(0.5)
+
+            pidfile = os.path.join(self.tmp, '.shogibench-worker.pgid')
+            with open(pidfile, 'w') as fout:
+                fout.write(str(os.getpgid(proc.pid)))
+
+            result = self.run_takeover()
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            time.sleep(1.0)
+            self.assertIsNone(proc.poll(), 'unrelated process group was killed via stale pidfile')
+            self.assertFalse(os.path.exists(pidfile), 'stale pidfile should be discarded')
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+
 
 def run_sourced(home, body, extra_env=None, timeout=30):
 

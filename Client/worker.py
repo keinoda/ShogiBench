@@ -61,7 +61,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 55 # Client version to send to the Server
+CLIENT_VERSION   = 56 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -94,25 +94,51 @@ def acquire_single_instance_lock():
     lock = open('.worker.lock', 'a')
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except BlockingIOError:
+        # 本当に別プロセスがロックを保持しているときだけ「多重起動」と判定する
         lock.close()
         print ('[Error] Another worker is already running from this directory')
         print ('[Error] Exiting to avoid duplicate workers (exit code %d)' % (EXIT_DUPLICATE))
         sys.exit(EXIT_DUPLICATE)
+    except OSError as error:
+        # flock が使えない環境 (NFS 等)。誤検知の exit 65 でラッパーごと
+        # 恒久停止するくらいなら、ロック無しで進める方が安全
+        lock.close()
+        print ('[Note] Instance lock unavailable (%s); continuing without it' % (error))
+        return
 
     WORKER_LOCK = lock
 
-def shutdown_if_revoked(error_message):
+def stop_detached_spsa():
 
-    ## サーバが「認証情報が無効 (ワーカーキーの無効化/削除、パスワード誤り)」を
-    ## 返したときは、リトライせずワーカーごと終了する。終了コード 66 により
-    ## setup_worker.sh の再起動ループも止まる
+    ## 恒久停止の前に、detached で走り続けている rshogi spsa を止める。
+    ## ワーカー突然死 → 再起動 → 登録前に失効、の経路では monitor による
+    ## 再接続まで到達しないため、ここで止めないと孤児が何日も回り続ける
 
-    markers = [ 'Bad Credentials', 'Worker key disabled or deleted' ]
+    try:
+        import spsa_rshogi
+        spsa_rshogi.stop_all_running_spsa()
+    except Exception as error:
+        print ('[Note] Could not stop detached SPSA runs: %s' % (error))
 
-    if any(marker in str(error_message) for marker in markers):
-        print ('[Error] Server rejected our credentials: %s' % (error_message))
+def shutdown_if_revoked(response):
+
+    ## サーバが「ワーカーキーの無効化/削除 (恒久的)」を通知してきたときは、
+    ## リトライせずワーカーごと終了する。終了コード 66 により setup_worker.sh
+    ## の再起動ループも止まる。
+    ##
+    ## 判定は構造化フラグ ('shutdown') で行う。旧サーバ (フラグ未対応) 向けに
+    ## SHUTDOWN_ERROR の文言だけは後方互換で見る。単なる 'Bad Credentials' では
+    ## 終了しない: アカウントの一時無効化やパスワード変更などの可逆的な失敗で
+    ## フリート全体が恒久停止しないように (サーバ側がキー失効を区別してフラグを立てる)
+
+    shutdown = isinstance(response, dict) and bool(response.get('shutdown'))
+    message  = response.get('error') if isinstance(response, dict) else response
+
+    if shutdown or 'Worker key disabled or deleted' in str(message):
+        print ('[Error] Server rejected our credentials: %s' % (message))
         print ('[Error] Worker key was likely disabled or deleted. Shutting down (exit code %d)' % (EXIT_SHUTDOWN))
+        stop_detached_spsa()
         sys.exit(EXIT_SHUTDOWN)
 
 def load_machine_token():
@@ -142,7 +168,11 @@ def wait_for_server_version(config):
     ## - サーバが古い (デプロイ待ち) 間は、登録せずにここで静かに待つ。
     ##   以前は「登録 → Bad Client Version → 再ダウンロード → 再登録」を数秒周期で
     ##   繰り返し、そのたびに新しい Machine 行を作ってマシン一覧が無限に増えていた
+    ## - 10分待っても追いつかないときはロールバック (サーバを意図的に古い版へ
+    ##   戻した) とみなし、クライアント側を再取得して合わせる
     ## - サーバが新しいときは BadVersionException でクライアント更新へ回す
+
+    waited = 0
 
     while True:
 
@@ -153,11 +183,19 @@ def wait_for_server_version(config):
         except Exception:
             return # 照合できないだけなら通常フローに任せる
 
-        if 'error' in response:
-            shutdown_if_revoked(response['error'])
+        # プロキシやメンテページが dict 以外の JSON を 200 で返すことがある。
+        # 照合できないだけなので、クラッシュせず通常フローに任せる
+        if not isinstance(response, dict):
             return
 
-        expected = int(response.get('client_version', CLIENT_VERSION))
+        if 'error' in response:
+            shutdown_if_revoked(response)
+            return
+
+        try:
+            expected = int(response.get('client_version', CLIENT_VERSION))
+        except (TypeError, ValueError):
+            return # 予期しない応答形式も同様にフェイルオープン
 
         if expected == CLIENT_VERSION:
             return
@@ -166,10 +204,17 @@ def wait_for_server_version(config):
             print ('[Note] Server expects client v%d, we are v%d: updating' % (expected, CLIENT_VERSION))
             raise BadVersionException()
 
-        # サーバの方が古い = サーバの再デプロイがまだ。スパムせず待つ
+        # サーバの方が古い = サーバの再デプロイがまだ。スパムせず待つが、
+        # 待ちすぎたらロールバックとみなしてクライアント側を合わせにいく
         print ('[Note] Server expects client v%d but we are v%d' % (expected, CLIENT_VERSION))
+
+        if waited >= 600:
+            print ('[Note] Server still behind after %ds: refreshing the Client to match' % (waited))
+            raise BadVersionException()
+
         print ('[Note] Server deploy appears to be behind; waiting 60s before rechecking')
         time.sleep(60)
+        waited += 60
 
 
 class Configuration:
@@ -361,7 +406,7 @@ class ServerReporter:
 
         # キー失効は恒久的なのでワーカーごと終了する
         if 'error' in as_json:
-            shutdown_if_revoked(as_json['error'])
+            shutdown_if_revoked(as_json)
 
         # Some fatal error, forcing us out of the Workload
         if 'error' in as_json:
@@ -1123,6 +1168,12 @@ def server_configure_match_runner(config, name, build_func):
     payload = { 'username' : config.username, 'password' : config.password }
     data    = requests.post(target, data=payload, timeout=TIMEOUT_HTTP).json()
 
+    # キー失効なら try_forever に握られる前にワーカーごと終了する。この関数は
+    # 起動順で最初の認証付き通信なので、ここを素通しにすると失効キーが
+    # 15秒毎の永久リトライになってしまう
+    if 'error' in data:
+        shutdown_if_revoked(data)
+
     # The 'error' header is included if there was an issue (eg Bad Credentials)
     if 'error' in data:
         raise Exception('Server error: %s' % data['error'])
@@ -1255,7 +1306,7 @@ def server_configure_worker(config):
 
     # 認証拒否 (キーの無効化/削除) はリトライしても直らないので終了する
     if 'error' in response:
-        shutdown_if_revoked(response['error'])
+        shutdown_if_revoked(response)
 
     # The 'error' header is included if there was an issue
     if 'error' in response:
@@ -1284,7 +1335,7 @@ def server_request_workload(config):
 
     # キーが無効化/削除されたら、ポーリングを続けず終了する
     if 'error' in response:
-        shutdown_if_revoked(response['error'])
+        shutdown_if_revoked(response)
 
     # Something very bad happened. Re-initialize the Client
     if 'error' in response:
@@ -1851,6 +1902,7 @@ def run_openbench_worker(client_args):
         # setup_worker.sh restart loop as well, so this is a full stop
         if os.path.isfile('openbench.exit'):
             print('Exited via openbench.exit')
+            stop_detached_spsa()
             sys.exit(EXIT_SHUTDOWN)
 
         try:

@@ -38,15 +38,23 @@ class ShutdownOnRevocationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.worker = import_worker()
 
-    def test_bad_credentials_exits_66(self):
+    def test_structured_shutdown_flag_exits_66(self):
 
+        # サーバがキー失効を構造化フラグで通知したときだけ終了する
         with self.assertRaises(SystemExit) as ctx:
-            self.worker.shutdown_if_revoked('Bad Credentials')
+            self.worker.shutdown_if_revoked({ 'error' : 'Bad Credentials', 'shutdown' : True })
         self.assertEqual(ctx.exception.code, self.worker.EXIT_SHUTDOWN)
 
-    def test_revoked_key_error_exits_66(self):
+    def test_plain_bad_credentials_does_not_exit(self):
 
-        # get_workload.SHUTDOWN_ERROR と文言を合わせている
+        # フラグの無い 'Bad Credentials' は可逆的な失敗 (アカウントの一時
+        # 無効化、パスワード変更など) かもしれないので、恒久停止しない
+        self.assertIsNone(self.worker.shutdown_if_revoked('Bad Credentials'))
+        self.assertIsNone(self.worker.shutdown_if_revoked({ 'error' : 'Bad Credentials' }))
+
+    def test_legacy_revoked_key_error_exits_66(self):
+
+        # 旧サーバ (フラグ未対応) 互換: get_workload.SHUTDOWN_ERROR の文言だけは見る
         with self.assertRaises(SystemExit) as ctx:
             self.worker.shutdown_if_revoked('Worker key disabled or deleted. Shut down.')
         self.assertEqual(ctx.exception.code, 66)
@@ -57,22 +65,57 @@ class ShutdownOnRevocationTests(unittest.TestCase):
         self.assertIsNone(self.worker.shutdown_if_revoked('Server Configuration Changed'))
         self.assertIsNone(self.worker.shutdown_if_revoked('No such Workload'))
 
+    def test_shutdown_stops_detached_spsa_first(self):
+
+        # 恒久停止の前に detached の spsa を止める (孤児チューナー防止)
+        import spsa_rshogi
+        calls    = []
+        original = spsa_rshogi.stop_all_running_spsa
+        spsa_rshogi.stop_all_running_spsa = lambda: calls.append(True) or 0
+        try:
+            with self.assertRaises(SystemExit):
+                self.worker.shutdown_if_revoked({ 'error' : 'x', 'shutdown' : True })
+            self.assertEqual(calls, [True])
+        finally:
+            spsa_rshogi.stop_all_running_spsa = original
+
     def test_workload_request_with_revoked_key_exits(self):
 
-        # サーバが {'error': 'Worker key disabled...'} を返すケースの結合確認
+        # サーバが {'error': ..., 'shutdown': True} を返すケースの結合確認
         config = types.SimpleNamespace(
             machine_id=1, secret_token='s', blacklist=[], server='http://example',
             workload=None)
 
         class FakeResponse:
             def json(self):
-                return { 'error' : 'Worker key disabled or deleted. Shut down.' }
+                return { 'error' : 'Worker key disabled or deleted. Shut down.',
+                         'shutdown' : True }
 
         original = self.worker.requests.post
         self.worker.requests.post = lambda *a, **k: FakeResponse()
         try:
             with self.assertRaises(SystemExit) as ctx:
                 self.worker.server_request_workload(config)
+            self.assertEqual(ctx.exception.code, 66)
+        finally:
+            self.worker.requests.post = original
+
+    def test_match_runner_configure_with_revoked_key_exits(self):
+
+        # 起動順で最初の認証付き通信 (fastchess/shogitest の configure) でも
+        # キー失効なら try_forever に握られる前に exit 66 する
+        config = types.SimpleNamespace(
+            server='http://example', username='u', password='p')
+
+        class FakeResponse:
+            def json(self):
+                return { 'error' : 'Bad Credentials', 'shutdown' : True }
+
+        original = self.worker.requests.post
+        self.worker.requests.post = lambda *a, **k: FakeResponse()
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                self.worker.server_configure_match_runner(config, 'fastchess', None)
             self.assertEqual(ctx.exception.code, 66)
         finally:
             self.worker.requests.post = original
@@ -143,6 +186,44 @@ class VersionGateTests(unittest.TestCase):
         finally:
             self.worker.requests.post = original
 
+    def test_older_server_eventually_refreshes_client(self):
+
+        # サーバがいつまでも古い = ロールバックされた可能性。10分相当
+        # 待ったら BadVersionException でクライアント側を合わせにいく
+        # (以前はここで永久に待ち続け、ロールバック時に全ワーカーが沈黙した)
+        from client import BadVersionException
+        def body():
+            self.worker.time.sleep = lambda seconds: None
+            with self.assertRaises(BadVersionException):
+                self.worker.wait_for_server_version(self.make_config())
+        self.with_server_version(self.worker.CLIENT_VERSION - 1, body)
+
+    def test_non_dict_response_skips_the_gate(self):
+
+        # プロキシ等が dict 以外の JSON を 200 で返してもクラッシュしない
+        class FakeResponse:
+            def json(self):
+                return 'maintenance'
+        original = self.worker.requests.post
+        self.worker.requests.post = lambda *a, **k: FakeResponse()
+        try:
+            self.assertIsNone(self.worker.wait_for_server_version(self.make_config()))
+        finally:
+            self.worker.requests.post = original
+
+    def test_non_numeric_version_skips_the_gate(self):
+
+        # client_version が数値でない応答もフェイルオープンで通常フローへ
+        class FakeResponse:
+            def json(self):
+                return { 'client_version' : 'not-a-number' }
+        original = self.worker.requests.post
+        self.worker.requests.post = lambda *a, **k: FakeResponse()
+        try:
+            self.assertIsNone(self.worker.wait_for_server_version(self.make_config()))
+        finally:
+            self.worker.requests.post = original
+
 
 class MachineTokenTests(unittest.TestCase):
 
@@ -204,6 +285,32 @@ class SingleInstanceLockTests(unittest.TestCase):
                 if self.worker.WORKER_LOCK:
                     self.worker.WORKER_LOCK.close()
                     self.worker.WORKER_LOCK = None
+                os.chdir(cwd)
+
+    def test_environment_lock_failure_proceeds_without_lock(self):
+
+        # flock が使えない環境 (NFS の ENOLCK 等) を「多重起動」と誤判定して
+        # exit 65 (ラッパーごと恒久停止) しない。ロック無しで続行する
+        if self.worker.IS_WINDOWS:
+            self.skipTest('flock is Linux-only')
+
+        import errno
+        import fcntl
+
+        def no_lock_support(*args, **kwargs):
+            raise OSError(errno.ENOLCK, 'No locks available')
+
+        original = fcntl.flock
+        fcntl.flock = no_lock_support
+
+        with tempfile.TemporaryDirectory() as workdir:
+            cwd = os.getcwd()
+            os.chdir(workdir)
+            try:
+                self.assertIsNone(self.worker.acquire_single_instance_lock())
+                self.assertIsNone(self.worker.WORKER_LOCK)
+            finally:
+                fcntl.flock = original
                 os.chdir(cwd)
 
 

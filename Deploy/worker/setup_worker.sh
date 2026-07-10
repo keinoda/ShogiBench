@@ -58,6 +58,40 @@ cleanup_pidfile() {
     return 0
 }
 
+pgid_looks_like_worker() {
+
+    # pidfile の pgid がまだ本当に shogibench 系のグループかを確かめる。
+    # 再起動などで pid 番号が再利用されると、記録された番号が無関係な
+    # プロセス群 (sshd や dockerd 等) を指すことがあり、無検証で kill
+    # できない。メンバーのコマンドラインか作業ディレクトリで判定する。
+    # 素の 'client.py' はパターンに入れない: 本物のワーカー群は必ず
+    # shogibench 系のパス/名前を持つ (無関係な同名スクリプトを守るため)
+    local pgid="$1" pid args cwd
+    for pid in $(pgrep -g "$pgid" 2>/dev/null || true); do
+        args=$(ps -o args= -p "$pid" 2>/dev/null || true)
+        cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+        case "$args $cwd" in
+            *shogibench*|*ShogiBench*|*setup_worker*)            return 0 ;;
+            *"${SHOGIBENCH_DIR:-/nonexistent-shogibench-dir}"*)  return 0 ;;
+        esac
+    done
+    return 1
+}
+
+shogibench_client_pid() {
+
+    # cmdline か作業ディレクトリが shogibench 系の client.py だけを対象に
+    # する。無関係なプロジェクトのたまたま同名の client.py を巻き込まない
+    local pid="$1" args cwd
+    args=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+    case "$args $cwd" in
+        *shogibench*|*ShogiBench*)                           return 0 ;;
+        *"${SHOGIBENCH_DIR:-/nonexistent-shogibench-dir}"*)  return 0 ;;
+    esac
+    return 1
+}
+
 self_ancestors() {
 
     # 自分の祖先 PID の一覧 (sshd やログ収集シェルなど)。コマンドラインに
@@ -138,7 +172,9 @@ stop_previous_workers() {
     PROTECTED_PIDS="$(protected_pids | tr '\n' ' ' || true)"
 
     # 1) Modern bootstraps record their process group here; killing the
-    #    group stops the loop, its installers, the client, and any engines
+    #    group stops the loop, its installers, the client, and any engines.
+    #    再起動後の pid 再利用で無関係なグループを指している場合は殺さず、
+    #    stale な記録として捨てる
     if [ -f "$PIDFILE" ]; then
         local oldpgid
         oldpgid=$(cat "$PIDFILE" 2>/dev/null | tr -d ' ' || true)
@@ -146,7 +182,9 @@ stop_previous_workers() {
             ''|*[!0-9]*) : ;;
             1) : ;;
             *)
-                if ! is_protected_group "$oldpgid" && ! is_protected_pid "$oldpgid"; then
+                if ! pgid_looks_like_worker "$oldpgid"; then
+                    rm -f "$PIDFILE" 2>/dev/null || true
+                elif ! is_protected_group "$oldpgid" && ! is_protected_pid "$oldpgid"; then
                     kill_group "$oldpgid"
                 fi ;;
         esac
@@ -161,10 +199,12 @@ stop_previous_workers() {
 
     # 3) Bootstraps started via `curl | bash` show up as a bare "bash" and
     #    are invisible to (2); find their restart loop through the running
-    #    client's parent shell instead, then stop the client itself
+    #    client's parent shell instead, then stop the client itself.
+    #    無関係なプロジェクトの同名 client.py は対象にしない
     local cpid ppid pcomm
     for cpid in $(pgrep -f '[c]lient.py' 2>/dev/null || true); do
         is_protected_pid "$cpid" && continue
+        shogibench_client_pid "$cpid" || continue
         ppid=$(ps -o ppid= -p "$cpid" 2>/dev/null | tr -d ' ' || true)
         if [ -n "$ppid" ] && [ "$ppid" != "1" ] && ! is_protected_pid "$ppid"; then
             pcomm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ' || true)
@@ -177,12 +217,25 @@ stop_previous_workers() {
 
     # 4) Give everything a moment to exit, then finish off stragglers, so
     #    the new run never races an old apt/dpkg lock or a half-dead client
-    local i
+    local i stray
     for i in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -f '[c]lient.py' >/dev/null 2>&1 || break
+        stray=""
+        for cpid in $(pgrep -f '[c]lient.py' 2>/dev/null || true); do
+            is_protected_pid "$cpid" && continue
+            if shogibench_client_pid "$cpid"; then
+                stray="$cpid"
+                break
+            fi
+        done
+        [ -n "$stray" ] || break
         sleep 1
     done
-    pkill -KILL -f '[c]lient.py' 2>/dev/null || true
+    for cpid in $(pgrep -f '[c]lient.py' 2>/dev/null || true); do
+        is_protected_pid "$cpid" && continue
+        if shogibench_client_pid "$cpid"; then
+            kill -KILL "$cpid" 2>/dev/null || true
+        fi
+    done
 }
 
 clang_major() {
