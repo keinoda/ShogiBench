@@ -472,6 +472,174 @@ def builds(request):
 
     return render(request, 'builds.html', data)
 
+def tunekits(request):
+
+    ## .tune キットの一覧と新規作成。キットは「YaneuraOu 系ソースに TUNE マクロを
+    ## 注入して探索パラメータを USI option 化する」パッチ定義で、SPSA 作成時に選ぶ
+
+    import OpenBench.tune_kits
+
+    if not request.user.is_authenticated:
+        return redirect(request, '/login/')
+
+    profile = Profile.objects.filter(user=request.user).first()
+    if not profile or not profile.enabled:
+        return redirect(request, '/index/', error='Only enabled users can manage Tune Kits')
+
+    if request.method == 'POST' and request.POST.get('action') == 'create':
+
+        engine    = request.POST.get('engine', '')
+        name      = request.POST.get('name', '').strip()[:64]
+        tune_text = request.POST.get('tune_text', '').replace('\r\n', '\n').replace('\r', '\n')
+
+        if engine not in OPENBENCH_CONFIG['engines']:
+            return redirect(request, '/tunekits/', error='Unknown engine')
+
+        if not re.match(r'^[\w.+()-]+$', name):
+            return redirect(request, '/tunekits/', error='Kit names may only contain letters, numbers, and ._+()-')
+
+        if TuneKit.objects.filter(engine=engine, name=name).exists():
+            return redirect(request, '/tunekits/', error='"%s" already exists for %s' % (name, engine))
+
+        if not tune_text.strip():
+            return redirect(request, '/tunekits/', error='.tune の内容を貼り付けてください')
+
+        yotune = OpenBench.tune_kits.load_yotune()
+        if not yotune.tune_files(tune_text):
+            return redirect(request, '/tunekits/', error='.tune に "#set file" がありません')
+
+        names = OpenBench.tune_kits.kit_param_names(tune_text)
+        if not names:
+            return redirect(request, '/tunekits/', error='.tune に @ マーカー付きのパラメータがありません')
+
+        # .params は貼り付けがあればそれを .tune に同期、なければ .tune から生成
+        params_text, report = OpenBench.tune_kits.sync_params(
+            tune_text, request.POST.get('params_text', ''))
+
+        kit = TuneKit.objects.create(
+            engine=engine, name=name, author=request.user.username,
+            tune_text=tune_text, params_text=params_text)
+
+        LogEvent.objects.create(
+            author=request.user.username, summary='TUNEKIT CREATE %s' % (name), log_file='', test_id=0)
+
+        return redirect(request, '/tunekits/%d/' % (kit.id),
+                        status='キット %s を作成しました (%d パラメータ)' % (name, len(names)))
+
+    data = { 'kits' : TuneKit.objects.all().order_by('engine', 'name') }
+    return render(request, 'tunekits.html', data)
+
+def tunekit(request, pk):
+
+    ## キット詳細: 編集・paramsの同期・ブランチ照合 (EXACT/NUMDRIFT/MISSING)・
+    ## 数値ドリフトの自動追随・削除。バージョン (ブランチ) が進んだときは
+    ## ここで「照合」→「自動追随」して .tune を現行ソースに合わせる
+
+    import OpenBench.tune_kits
+
+    if not request.user.is_authenticated:
+        return redirect(request, '/login/')
+
+    profile = Profile.objects.filter(user=request.user).first()
+    if not profile or not profile.enabled:
+        return redirect(request, '/index/', error='Only enabled users can manage Tune Kits')
+
+    if not (kit := TuneKit.objects.filter(id=pk).first()):
+        return redirect(request, '/tunekits/', error='No such Tune Kit')
+
+    may_edit = profile.approver or kit.author == request.user.username
+
+    data = {
+        'kit'          : kit,
+        'may_edit'     : may_edit,
+        'param_names'  : OpenBench.tune_kits.kit_param_names(kit.tune_text),
+        'check_repo'   : OPENBENCH_CONFIG['engines'][kit.engine]['source']
+                             if kit.engine in OPENBENCH_CONFIG['engines'] else '',
+        'check_branch' : 'master',
+    }
+
+    if request.method != 'POST':
+        return render(request, 'tunekit.html', data)
+
+    action = request.POST.get('action')
+
+    # --- 誰でも実行できる読み取り系 (照合) ---
+
+    if action == 'check':
+
+        repo   = request.POST.get('repo', data['check_repo']).strip()
+        branch = request.POST.get('branch', 'master').strip() or 'master'
+
+        try:
+            results, counts = OpenBench.tune_kits.check_kit(kit.tune_text, kit.engine, repo, branch)
+            data['check_results'] = results
+            data['check_counts']  = counts
+            data['check_ok']      = not counts['NUMDRIFT'] and not counts['MISSING']
+        except OpenBench.tune_kits.TuneSourceError as error:
+            data['error'] = error.message
+
+        data['check_repo'], data['check_branch'] = repo, branch
+        return render(request, 'tunekit.html', data)
+
+    # --- 以降は編集系 ---
+
+    if not may_edit:
+        return redirect(request, '/tunekits/%d/' % (kit.id), error='Only the author or an approver can edit this kit')
+
+    if action == 'save':
+
+        tune_text   = request.POST.get('tune_text', '').replace('\r\n', '\n').replace('\r', '\n')
+        params_text = request.POST.get('params_text', '').replace('\r\n', '\n').replace('\r', '\n')
+
+        if not tune_text.strip():
+            return redirect(request, '/tunekits/%d/' % (kit.id), error='.tune を空にはできません')
+
+        kit.tune_text, kit.params_text = tune_text, params_text
+        kit.save()
+        return redirect(request, '/tunekits/%d/' % (kit.id), status='保存しました')
+
+    if action == 'sync_params':
+
+        params_text, report = OpenBench.tune_kits.sync_params(kit.tune_text, kit.params_text)
+        kit.params_text = params_text
+        kit.save()
+
+        status = '.params を .tune に同期しました (追加 %d / 引退 %d / 維持 %d)' % (
+            len(report['added']), len(report['retired']), report['kept'])
+        return redirect(request, '/tunekits/%d/' % (kit.id), status=status)
+
+    if action == 'retune':
+
+        repo   = request.POST.get('repo', data['check_repo']).strip()
+        branch = request.POST.get('branch', 'master').strip() or 'master'
+
+        try:
+            new_text, report = OpenBench.tune_kits.retune_kit(kit.tune_text, kit.engine, repo, branch)
+        except OpenBench.tune_kits.TuneSourceError as error:
+            return redirect(request, '/tunekits/%d/' % (kit.id), error=error.message)
+
+        kit.tune_text = new_text
+        kit.save()
+
+        status = '自動追随: %d ブロックを書き換え、%d は一致済み' % (len(report['auto']), len(report['exact']))
+        if report['manual']:
+            status += '\n手当てが必要 (MANUAL): %s' % (
+                ', '.join('%s (%s)' % (name, why) for name, why in report['manual']))
+        else:
+            status += '\n全ブロックが現行ソースと一致しています'
+
+        LogEvent.objects.create(
+            author=request.user.username, summary='TUNEKIT RETUNE %s' % (kit.name), log_file='', test_id=0)
+
+        return redirect(request, '/tunekits/%d/' % (kit.id), status=status)
+
+    if action == 'delete':
+        name = kit.name
+        kit.delete()
+        return redirect(request, '/tunekits/', status='キット %s を削除しました' % (name))
+
+    return redirect(request, '/tunekits/%d/' % (kit.id), error='Unknown action')
+
 def server_public_url(request):
 
     ## The URL workers must use to reach this server. Behind some proxies

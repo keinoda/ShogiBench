@@ -1,0 +1,121 @@
+{% extends "OpenBench/base.html" %}
+
+{% load static %}
+
+{% block content %}
+
+    <h3>.tune キット: [{{kit.engine}}] {{kit.name}}</h3>
+
+    <p>
+        パラメータ {{param_names|length}} 個 / 作成者 {{kit.author}} /
+        内容ハッシュ <code>{{kit.content_sha}}</code>
+    </p>
+
+    <!-- 照合: バージョン(ブランチ)が進んだときの追随フロー入口 -->
+    <h3>ソースとの照合</h3>
+
+    <p>
+        SPSAを回す予定のブランチと照合します。
+        <b>EXACT</b>=そのまま通る /
+        <b>NUMDRIFT</b>=数値だけずれた(自動追随可) /
+        <b>MISSING</b>=構造が変わった(下のエディタで手当てが必要)。
+        SPSA作成時にも同じ照合が自動で走り、ずれているとキット更新を促されます。
+    </p>
+
+    <form method="POST" action="/tunekits/{{kit.id}}/">
+        {% csrf_token %}
+        <div class="form w-100">
+            <div class="col-full">
+                <div class="row">
+                    <label for="repo">ソース</label>
+                    <input id="repo" name="repo" value="{{check_repo}}">
+                </div>
+                <div class="row">
+                    <label for="branch">ブランチ</label>
+                    <input id="branch" name="branch" value="{{check_branch}}">
+                </div>
+                <div class="row" style="gap: 8px;">
+                    <button type="submit" name="action" value="check" class="anchorbutton btn-blue">照合</button>
+                    {% if may_edit %}
+                        <button type="submit" name="action" value="retune" class="anchorbutton btn-yellow"
+                                onclick="return confirm('NUMDRIFTブロックの本文を現行ソースの実テキストで書き換えます。よろしいですか?');">
+                            数値ドリフトを自動追随</button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </form>
+
+    {% if check_counts %}
+        <pre class="long-statblock">照合結果: EXACT {{check_counts.EXACT}} / NUMDRIFT {{check_counts.NUMDRIFT}} / MISSING {{check_counts.MISSING}}{% if check_ok %}
+✅ 全ブロックが一致。このブランチでそのままSPSAを作成できます{% else %}
+⚠ ずれがあります。NUMDRIFTは「数値ドリフトを自動追随」で更新、MISSINGは下のエディタで該当contextを現行ソースに合わせて書き直してください{% endif %}</pre>
+
+        <table class="stripes wrappable">
+            <tr class="table-header">
+                <th>Context</th>
+                <th>ファイル</th>
+                <th>状態</th>
+                <th>詳細</th>
+            </tr>
+            {% for entry in check_results %}
+                <tr>
+                    <td>{{entry.name}}</td>
+                    <td><code>{{entry.file}}</code></td>
+                    <td>
+                        {% if entry.status == 'EXACT' %}
+                            <span style="color: var(--color-green, #3c3);">EXACT</span>
+                        {% elif entry.status == 'NUMDRIFT' %}
+                            <span style="color: orange;">NUMDRIFT</span>
+                        {% else %}
+                            <span style="color: red;">MISSING</span>
+                        {% endif %}
+                    </td>
+                    <td>{{entry.detail}}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% endif %}
+
+    <br>
+
+    <!-- 編集 -->
+    <h3>編集</h3>
+
+    <form method="POST" action="/tunekits/{{kit.id}}/">
+        {% csrf_token %}
+        <div class="form w-100">
+            <div class="col-full">
+                <div class="row">
+                    <label for="tune_text">.tune</label>
+                    <textarea id="tune_text" name="tune_text" rows="24"
+                              style="font-family: monospace;" {% if not may_edit %}readonly{% endif %}>{{kit.tune_text}}</textarea>
+                </div>
+                <div class="row">
+                    <label for="params_text" title="SPSA作成時にこの内容がSPSA入力へ自動転記されます。値・レンジはここで調整できます">.params</label>
+                    <textarea id="params_text" name="params_text" rows="14"
+                              style="font-family: monospace;" {% if not may_edit %}readonly{% endif %}>{{kit.params_text}}</textarea>
+                </div>
+                {% if may_edit %}
+                    <div class="row" style="gap: 8px;">
+                        <button type="submit" name="action" value="save" class="anchorbutton btn-blue">保存</button>
+                        <button type="submit" name="action" value="sync_params" class="anchorbutton btn-preset"
+                                title="保存済みの .tune のパラメータ集合に .params を合わせます (既存行の値・レンジは保持、消えた行は [[NOT USED]]、新しい行は既定レンジで追加)">
+                            .params を .tune から再同期</button>
+                        <button type="submit" name="action" value="delete" class="anchorbutton btn-red"
+                                onclick="return confirm('キット {{kit.name}} を削除しますか?');">削除</button>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </form>
+
+    <p style="font-size: small; color: var(--color-font2);">
+        追随の流れ: masterが進む → 「照合」でずれ確認 → NUMDRIFTは「自動追随」で本文が
+        現行ソースの数値に書き換わる → MISSINGは現行ソースを見て該当 #context の本文を
+        手で書き直す (@ の個数と順序 = パラメータ名の対応を維持) → 再照合で全EXACTを確認 →
+        「.params を .tune から再同期」。パラメータの現在値 (.params の3列目) は追随では
+        変わらないので、前回チューニングの到達値から継続できます。
+    </p>
+
+{% endblock %}

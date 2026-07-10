@@ -26,6 +26,7 @@ import requests
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -160,12 +161,14 @@ def read_git_credentials(engine):
     raise OpenBenchMissingAPICredentialsException('%s not found' % fname)
 
 
-def engine_binary_name(engine, commit_sha, net_path, private, build_args=''):
+def engine_binary_name(engine, commit_sha, net_path, private, build_args='', tune_sha=''):
     name = '%s-%s' % (engine, commit_sha.upper()[:8])
     if net_path and not private:
         name += '-%s' % (net_path[-8:])
     if build_args and not private: # Distinguish binaries built with different make args
         name += '-%s' % (hashlib.sha256(build_args.encode('utf-8')).hexdigest()[:8].upper())
+    if tune_sha and not private:   # Distinguish TUNE builds (.tune キット注入済み)
+        name += '-T%s' % (tune_sha[:8].upper())
     return name
 
 def check_for_engine_binary(out_path):
@@ -325,7 +328,36 @@ def download_network(server, username, password, engine, net_name, net_sha, net_
         os.remove(net_path)
         raise OpenBenchCorruptedNetworkException('Invalid SHA for %s' % (net_name))
 
-def download_public_engine(engine, net_path, branch, source, make_path, out_path, compiler=None, build_args='', alt_binary=''):
+def apply_tune_patch(tune, target_dir):
+
+    ## SPSA の TUNE ビルド: .tune キット (tune['tune_text'] / tune['params_text'])
+    ## を tune.py でソースに注入し、探索パラメータを USI option 化する。
+    ## keinoda/fuuppi-spsa の 10_patch_build.sh の `tune.py tune` 相当
+
+    tune_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tune.py')
+
+    with tempfile.TemporaryDirectory() as kit_dir:
+
+        tune_path   = os.path.join(kit_dir, 'kit.tune')
+        params_path = os.path.join(kit_dir, 'kit.params')
+
+        with open(tune_path, 'w', encoding='utf-8') as fout:
+            fout.write(tune['tune_text'])
+        with open(params_path, 'w', encoding='utf-8') as fout:
+            fout.write(tune['params_text'])
+
+        print ('Applying .tune kit "%s" (%s)' % (tune.get('name'), tune.get('sha')))
+
+        process = subprocess.run(
+            [sys.executable, tune_py, 'tune', tune_path, os.path.abspath(target_dir)],
+            capture_output=True, text=True)
+
+        if process.returncode != 0 or 'end tune_parameters()' not in process.stdout:
+            output = process.stdout + '\n' + process.stderr
+            raise OpenBenchBuildFailedException(
+                'TUNE patch (.tuneキット "%s") の適用に失敗しました' % (tune.get('name')), output)
+
+def download_public_engine(engine, net_path, branch, source, make_path, out_path, compiler=None, build_args='', alt_binary='', tune=None):
 
     # Check to see if we already have the binary
     if check_for_engine_binary(out_path):
@@ -356,6 +388,10 @@ def download_public_engine(engine, net_path, branch, source, make_path, out_path
         make_path = os.path.join(src_path, make_path)
         bin_path  = os.path.join(make_path, os.path.basename(out_path))
         make_cmd  = makefile_command(net_path, make_path, os.path.basename(out_path), compiler, build_args)
+
+        # SPSA の TUNE ビルド: make の前に .tune キットをソースへ注入する
+        if tune:
+            apply_tune_patch(tune, make_path)
 
         # Build the engine, which will produce a binary to bin_path, to be moved after
         process     = subprocess.Popen(make_cmd, cwd=make_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

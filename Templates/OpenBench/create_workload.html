@@ -8,6 +8,7 @@
     {{ networks|json_script:"json-networks" }}
     {{ profile.repos|json_script:"json-repos" }}
     {{ build_variants|json_script:"json-build-variants" }}
+    {{ tune_kits|json_script:"json-tune-kits" }}
 
     <script src="{% static 'create_workload.js' %}?{{ static_version }}"></script>
     <script src="{% static 'default_text.js' %}?{{ static_version }}"></script>
@@ -122,6 +123,24 @@
                     </div>
 
                 {% elif workload == "TUNE" %}
+
+                    <h3> TUNE ビルド (.tune キット) </h3>
+
+                    <p style="font-size: small; color: var(--color-font2); margin: 0 0 4px 24px;">
+                        キットを選ぶと、ワーカーがビルド前にソースへ TUNE マクロを注入して
+                        探索パラメータを USI オプション化し、下の SPSA 入力にキットの
+                        .params を転記します。作成時にブランチと自動照合し、ずれていれば
+                        <a href="/tunekits/">.tuneキットページ</a>での追随を促します。
+                        「なし」は既に USI オプション化済みのエンジン
+                        (手動 TUNE ビルドのブランチ等) 向けです。
+                    </p>
+
+                    <div class="row">
+                        <label for="spsa_tune_kit"> .tuneキット </label>
+                        <select id="spsa_tune_kit" name="spsa_tune_kit" onchange="apply_tune_kit()">
+                            <option selected value=""> なし </option>
+                        </select>
+                    </div>
 
                     <h3> SPSA 入力 (.params) </h3>
 

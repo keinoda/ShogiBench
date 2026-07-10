@@ -32,6 +32,7 @@
 import math
 
 import OpenBench.spsa_params
+import OpenBench.tune_kits
 import OpenBench.utils
 import OpenBench.views
 
@@ -74,6 +75,11 @@ def create_workload(request, workload_type):
             engine : OpenBench.views.engine_build_variants(engine)
             for engine in OPENBENCH_CONFIG['engines']
         }
+
+        # .tune キット (SPSA 作成フォームでの選択と .params 自動転記に使う)
+        data['tune_kits'] = list(
+            TuneKit.objects.all().order_by('engine', 'name')
+                .values('id', 'engine', 'name', 'params_text'))
 
         if workload_type == 'TEST':
             data['workload']        = workload_type
@@ -208,6 +214,15 @@ def create_new_tune(request):
     if errors:
         return None, errors
 
+    # .tune キット使用時は、対象ブランチと全 context / マーカーが一致することを
+    # ここで確認する。ずれたままワーカーに渡すと TUNE ビルドが必ず失敗するので、
+    # 作成時に止めてキットページ (照合 → 自動追随) へ誘導する
+    if (kit := requested_tune_kit(request)):
+        errors = OpenBench.tune_kits.verify_kit_matches_branch(
+            kit, request.POST['dev_repo'], request.POST['dev_branch'])
+        if errors:
+            return None, errors
+
     test                  = Test()
     test.author           = request.user.username
     test.book_name        = request.POST['book_name']
@@ -327,6 +342,13 @@ def create_new_datagen(request):
 
     return test, None
 
+def requested_tune_kit(request):
+
+    raw = request.POST.get('spsa_tune_kit', '').strip()
+    if raw == '' or raw == 'NONE' or not raw.isdigit():
+        return None
+    return TuneKit.objects.filter(id=int(raw)).first()
+
 def extract_spsa_config(request):
 
     ## rshogi ラッパー用の SPSA 設定。スケジュール計算 (c_k, a_k) は rshogi 側が
@@ -347,9 +369,26 @@ def extract_spsa_config(request):
             'result_variance' : float(request.POST['spsa_early_result_var']),
         }
 
+    # .tune キットはスナップショットで保存する: 後からキットが編集・追随されても、
+    # 実行中 / 再開時のこのチューニングは作成時点の内容でビルドされ続ける
+    # (rshogi の resume はパラメータ集合の変化を許さないため)
+    tune_kit = None
+    if (kit := requested_tune_kit(request)):
+        tune_kit = {
+            'id'          : kit.id,
+            'name'        : kit.name,
+            'engine'      : kit.engine,
+            'sha'         : kit.content_sha(),
+            'tune_text'   : kit.tune_text,
+            'params_text' : kit.params_text,
+        }
+
     return {
         # 新旧スキーマの判別子。旧 (分散SPSA) レコードにはこのキーが無い
         'wrapper'      : 'RSHOGI',
+
+        # TUNE ビルド用の .tune キットのスナップショット (未使用時は None)
+        'tune_kit'     : tune_kit,
 
         # rshogi spsa の fishtest 互換スケジュール設定
         'alpha'        : float(request.POST['spsa_alpha']),

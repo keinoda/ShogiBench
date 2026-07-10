@@ -16,13 +16,13 @@ early stop など rshogi 側の機能がそのまま使える。
 ## 全体の流れ
 
 ```
-[GUI /tune/new/]                 [ワーカー (Linux)]
-  エンジン/ブランチ/ビルド変種      1. rshogi の spsa を cargo ビルド (初回のみ、キャッシュされる)
-  ネットワーク (eval + aux)        2. エンジンをビルドし bench で eval ロードを検証 (NPS も報告)
-  .params テキスト                 3. SPSA/<test_id>/canonical.params を書き run dir を用意
-  総ペア数/バッチペア数/seed等  →   4. spsa を起動 (別プロセスグループ、run.log へ出力)
-                                   5. meta.json / stats.csv / state.params を30秒ごとに読んで報告
-[GUI /tune/<id>/]                 6. 完走で final.params をアップロード
+[GUI /tunekits/]                  [GUI /tune/new/]                 [ワーカー (Linux)]
+  .tune キット登録                   エンジン/ブランチ/ビルド変種      1. rshogi の spsa を cargo ビルド (初回のみ)
+  masterが進んだら照合→自動追随  →   .tuneキット選択 (params自動転記)   2. .tune キットをソースに注入して TUNE ビルド
+                                    総ペア数/バッチペア数/seed等  →    3. bench で eval ロードを検証 (NPS も報告)
+                                    (作成時にブランチと自動照合)        4. SPSA/<test_id>/ に run dir を用意し spsa を起動
+                                                                      5. meta.json / stats.csv / state.params を30秒ごとに報告
+[GUI /tune/<id>/]                                                     6. 完走で final.params をアップロード
   進捗・現在値・final.params  ←
 ```
 
@@ -31,11 +31,49 @@ early stop など rshogi 側の機能がそのまま使える。
 - **成績表示**: W/L/D は rshogi の「+側 (プラス摂動側)」視点。raw_result が
   0 近傍を揺れるのが正常 (収束のシグナル)。
 
+## .tune キット (TUNE ビルドとバージョン追随) — /tunekits/
+
+素のやねうら王には探索パラメータを外から変える USI オプションが無いので、SPSA の
+前段として **tune.py で `TUNE(...)` マクロを注入した「TUNE ビルド」** が要る
+(fuuppi-spsa の `10_patch_build.sh` 相当)。これを GUI で完結させるのが .tune キット:
+
+1. **登録**: `/tunekits/` に `.tune` を貼る (`Scripts/tune/` と同じ書式:
+   `#set file` / `#context 名前` / `123@` マーカー / `#add マーカー`)。
+   `.params` は省略すれば .tune から自動生成される (初期値=ソースの数値、
+   レンジ=0〜2倍、step=可動域の1/20、delta=0.002 — tune.py と同じ既定)。
+   既存の .params を貼れば値・レンジが引き継がれる。
+2. **SPSA 作成**: `/tune/new/` でキットを選ぶと .params が SPSA 入力へ自動転記される。
+   ブランチは通常の `master` でよい — **ワーカーがビルド直前に tune.py でパッチを
+   当てて TUNE ビルドを作る** (バイナリはキット内容のハッシュ付きでキャッシュ)。
+   パッチ済みビルドでは名前がそのまま USI オプションなので、名前マッピングは「なし」。
+3. **バージョンが変わったら (master が進んだら)**: SPSA 作成時に全 context と
+   挿入マーカーが対象ブランチと自動照合され、ずれていると作成が止まりキットページへ
+   誘導される。キットページで:
+   - 「照合」→ 各ブロックを **EXACT / NUMDRIFT / MISSING** に分類して表示
+   - 「数値ドリフトを自動追随」→ NUMDRIFT の本文を現行ソースの実テキストに書き換え
+     (@ マーカーは同じ序数の数値に付け直し。check_contexts.py / retune.py 相当)
+   - MISSING (構造変化) はエディタで該当 `#context` を現行ソースに合わせて手で直す
+     (@ の個数と順序 = パラメータ名の対応を維持)
+   - 「.params を .tune から再同期」→ 消えたパラメータは `[[NOT USED]]` で残し、
+     新しいパラメータを既定レンジで追加。**既存行の現在値は変わらない**ので、
+     前回チューニングの到達値から継続できる
+4. **検査**: SPSA 作成時、SPSA 入力のパラメータ名とキットの .tune の名前集合が
+   突き合わされる (欠けはエラー: サイレントな死にパラメータを防ぐ。外すときは
+   `[[NOT USED]]` を付けて残す)。
+
+キットを使った SPSA はキット内容の**スナップショット**を持つ: 後からキットを
+編集・追随しても、実行中/再開中のチューニングは作成時点の内容でビルドされ続ける。
+
+キットを使わない場合 (「なし」) は従来どおり: 既に USI オプション化済みのブランチ
+(手動 TUNE ビルド) を指すか、rshogi 正準名 + 名前マッピング=YaneuraOu で回す。
+
 ## GUI での作り方 (従来スクリプトとの対応)
 
-| run_production.sh のフラグ | GUI の入力 |
+| 従来のスクリプト/フラグ | GUI の入力 |
 |---|---|
-| `--engine-path <TUNEビルド>` | エンジン + ブランチ + ビルド (TUNE ビルドの変種を /builds/ で登録して選ぶ) |
+| `10_patch_build.sh` (tune.py tune + TUNEビルド) | .tuneキット選択 (ワーカーが自動でパッチ+ビルド) |
+| `check_contexts.py` / `retune.py` / `manual_fix.py` | /tunekits/ の「照合」「数値ドリフトを自動追随」+ エディタ |
+| `--engine-path <TUNEビルド>` | エンジン + ブランチ + ビルド (キット使用時は master のままで可) |
 | `--init-from canonical.params` | SPSA 入力欄に .params をそのまま貼る (`//` コメント・`[[NOT USED]]` 可) |
 | `--engine-param-mapping yo_rshogi_mapping.toml` | 名前マッピング = YaneuraOu |
 | `--active-only-regex "$(cat active_regex.txt)"` | 対象絞り込み欄 |

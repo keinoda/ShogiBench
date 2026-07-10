@@ -202,6 +202,7 @@ def verify_tune_creation(errors, request):
         (verify_spsa_active_regex     , 'spsa_active_regex'),
         (verify_spsa_mapping          , 'spsa_mapping', 'Parameter Mapping'),
         (verify_spsa_early_stop       , 'spsa_early_patience'),
+        (verify_spsa_tune_kit         , 'spsa_tune_kit'),
     ]
 
     for verification in verifications:
@@ -416,6 +417,72 @@ def verify_spsa_mapping(errors, request, field, field_name):
     candidates = ['NONE', 'YO']
     try: assert request.POST.get(field, 'NONE') in candidates
     except: errors.append('%s must be in %s' % (field_name, ', '.join(candidates)))
+
+def verify_spsa_tune_kit(errors, request, field):
+
+    ## .tune キット選択時の整合性:
+    ## - キットが存在し、エンジンが一致する
+    ## - 名前マッピングは「なし」(キットの名前はTUNEビルドのUSIオプション名そのもの)
+    ## - SPSA入力のパラメータ名がキットの .tune と噛み合っている
+    ##   (欠けがあると「死にパラメータ」がサイレントに生まれるため、厳密に検査する)
+
+    raw = request.POST.get(field, '').strip()
+    if raw == '' or raw == 'NONE':
+        return
+
+    import OpenBench.tune_kits
+
+    kit = TuneKit.objects.filter(id=raw).first() if raw.isdigit() else None
+    if not kit:
+        return errors.append('選択された .tune キットが見つかりません')
+
+    if kit.engine != request.POST.get('dev_engine', ''):
+        return errors.append('.tuneキット "%s" は %s 用です' % (kit.name, kit.engine))
+
+    if request.POST.get('spsa_mapping', 'NONE') != 'NONE':
+        errors.append('.tuneキット使用時は名前マッピングを「なし」にしてください '
+                      '(パラメータ名はTUNEビルドのUSIオプション名そのものです)')
+
+    try:
+        rows, row_errors = OpenBench.spsa_params.parse_params_text(request.POST['spsa_inputs'])
+    except:
+        return
+    if row_errors:
+        return # spsa_inputs 側の検証が報告する
+
+    tune_names   = set(OpenBench.tune_kits.kit_param_names(kit.tune_text))
+    input_names  = { row['name'] for row in rows }
+    active_names = { row['name'] for row in rows if not row['not_used'] }
+
+    # .tune にあるのに SPSA 入力に無い → そのパラメータはUSIオプション化される
+    # のに一切動かされない (事故のもと)。[[NOT USED]] で明示的に外すのは可
+    if (missing := sorted(tune_names - input_names)):
+        errors.append('SPSA入力に .tuneキットのパラメータがありません: %s '
+                      '(外すときは [[NOT USED]] を付けて残してください)' % (', '.join(missing[:8])))
+
+    # SPSA 入力でアクティブなのに .tune に無い → エンジンにそのオプションが
+    # 存在せず setoption が無視される
+    if (unknown := sorted(active_names - tune_names)):
+        errors.append('SPSA入力に .tuneキットに無いパラメータがあります: %s' % (', '.join(unknown[:8])))
+
+    # レンジの整合: TUNE ビルドの USI オプションレンジ (SetRange) はキットの
+    # .params から作られる。SPSA 入力側で範囲を「広げる」と setoption がレンジ外で
+    # 弾かれて動かない値になるため、広げたいときはキットの .params 側を編集する
+    kit_rows, kit_errors = OpenBench.spsa_params.parse_params_text(kit.params_text)
+    if kit_errors:
+        errors.append('.tuneキット "%s" の .params が壊れています。キットページで修正してください' % (kit.name))
+        return
+
+    kit_by_name = { row['name'] : row for row in kit_rows }
+    for row in rows:
+        if row['not_used'] or row['name'] not in kit_by_name:
+            continue
+        kit_row = kit_by_name[row['name']]
+        if row['min'] < kit_row['min'] or row['max'] > kit_row['max']:
+            errors.append(
+                '%s の範囲 [%g, %g] がキットの範囲 [%g, %g] を超えています。'
+                '広げる場合はキットの .params を先に編集してください (TUNEビルドのUSIレンジはキット由来のため)'
+                % (row['name'], row['min'], row['max'], kit_row['min'], kit_row['max']))
 
 def verify_spsa_early_stop(errors, request, field):
 

@@ -7,6 +7,10 @@ var repos    = JSON.parse(document.getElementById('json-repos'   ).textContent);
 var build_variants_el = document.getElementById('json-build-variants');
 var build_variants    = build_variants_el ? JSON.parse(build_variants_el.textContent) : {};
 
+// .tune kits registered on /tunekits/ (SPSA tuning pages only)
+var tune_kits_el = document.getElementById('json-tune-kits');
+var tune_kits    = (tune_kits_el && JSON.parse(tune_kits_el.textContent)) || [];
+
 function create_network_options(field_id, engine) {
 
     var has_default     = false;
@@ -64,6 +68,57 @@ function create_build_options(field_id, engine) {
         opt.selected = name === 'default';
         opt.title    = variants[name];
         build_options.add(opt);
+    }
+}
+
+function create_tune_kit_options(field_id, engine) {
+
+    var kit_options = document.getElementById(field_id);
+
+    // Only SPSA tuning pages have the .tune kit selector
+    if (kit_options == null)
+        return;
+
+    while (kit_options.length)
+        kit_options.remove(0);
+
+    { // 'なし' = engine already exposes the parameters as USI options
+        var opt      = document.createElement('option');
+        opt.text     = 'なし';
+        opt.value    = '';
+        opt.selected = true;
+        kit_options.add(opt);
+    }
+
+    for (const kit of tune_kits) {
+
+        if (kit.engine !== engine)
+            continue;
+
+        var opt   = document.createElement('option');
+        opt.text  = kit.name;
+        opt.value = kit.id;
+        kit_options.add(opt);
+    }
+}
+
+function apply_tune_kit() {
+
+    // Fill the SPSA inputs with the kit's .params, and force mapping off
+    // (kit parameter names ARE the TUNE build's USI option names)
+
+    const selection = document.getElementById('spsa_tune_kit');
+    const kit_id    = selection.options[selection.selectedIndex].value;
+
+    if (kit_id === '')
+        return;
+
+    for (const kit of tune_kits) {
+        if (String(kit.id) === kit_id) {
+            document.getElementById('spsa_inputs').value  = kit.params_text;
+            document.getElementById('spsa_mapping').value = 'NONE';
+            break;
+        }
     }
 }
 
@@ -155,6 +210,9 @@ function set_engine(engine, target) {
 
     create_network_options(target + '_network', engine);
     create_build_options(target + '_build', engine);
+
+    if (target == 'dev')
+        create_tune_kit_options('spsa_tune_kit', engine);
 }
 
 function set_option(option_name, option_value) {

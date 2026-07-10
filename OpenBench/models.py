@@ -19,9 +19,11 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 from django.db.models import CharField, IntegerField, BigIntegerField, BooleanField, FloatField
-from django.db.models import JSONField, ForeignKey, DateTimeField, OneToOneField
+from django.db.models import JSONField, ForeignKey, DateTimeField, OneToOneField, TextField
 from django.db.models import CASCADE, PROTECT, Model, TextChoices
 from django.contrib.auth.models import User
+
+import hashlib
 
 class Engine(Model):
 
@@ -82,6 +84,33 @@ class BuildVariant(Model):
 
     def __str__(self):
         return '[%s] %s: %s' % (self.engine, self.name, self.args)
+
+class TuneKit(Model):
+
+    # .tune キット: YaneuraOu 系ソースに TUNE マクロを注入して探索パラメータを
+    # USI option 化するためのパッチ定義 (.tune) と、その .params。
+    # SPSA (rshogi ラッパー) 作成時にキットを選ぶと、ワーカーがビルド前に
+    # ソースへパッチを当てて TUNE ビルドを作る。master が進んで context が
+    # ずれたときは /tunekits/ ページの照合・自動追随で更新する
+
+    engine      = CharField(max_length=64)
+    name        = CharField(max_length=64)
+    author      = CharField(max_length=64)
+    tune_text   = TextField()
+    params_text = TextField(blank=True, default='')
+    created     = DateTimeField(auto_now_add=True)
+    updated     = DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('engine', 'name')
+
+    def __str__(self):
+        return '[%s] %s' % (self.engine, self.name)
+
+    def content_sha(self):
+        # TUNE ビルドのバイナリキャッシュを区別するためのハッシュ
+        data = (self.tune_text + '\0' + self.params_text).encode('utf-8')
+        return hashlib.sha256(data).hexdigest()[:8].upper()
 
 class SSHCredential(Model):
 

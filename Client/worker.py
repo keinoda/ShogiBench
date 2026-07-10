@@ -1294,7 +1294,12 @@ def safe_download_engine(config, branch, net_path):
     private     = config.workload['test'][branch]['private']
     build_args  = config.workload['test'][branch].get('build_args', '')
 
-    bin_name = utils.engine_binary_name(engine, commit_sha, net_path, private, build_args)
+    # SPSA の TUNE ビルド: .tune キットをビルド前にソースへ注入する。
+    # キットが違えば別バイナリなので、キャッシュ名にもハッシュを含める
+    tune     = config.workload['test'][branch].get('tune')
+    tune_sha = tune['sha'] if tune else ''
+
+    bin_name = utils.engine_binary_name(engine, commit_sha, net_path, private, build_args, tune_sha)
     out_path = os.path.join('Engines', bin_name)
 
     if private:
@@ -1315,7 +1320,7 @@ def safe_download_engine(config, branch, net_path):
 
         try:
             return utils.download_public_engine(
-                engine, net_path, branch_name, source, make_path, out_path, compiler, build_args, alt_binary)
+                engine, net_path, branch_name, source, make_path, out_path, compiler, build_args, alt_binary, tune)
 
         except utils.OpenBenchBuildFailedException as error:
 

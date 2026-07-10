@@ -520,3 +520,5 @@ if __name__ == "__main__":
         error_msg = traceback.format_exc()
         print(f"Exception : {e}")
         print(error_msg)
+        # 自動化 (ShogiBench ワーカーの TUNE ビルド等) が失敗を検知できるように
+        sys.exit(1)

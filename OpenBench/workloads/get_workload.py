@@ -296,6 +296,18 @@ def workload_to_dictionary(test, result, machine):
         'private'      : OPENBENCH_CONFIG['engines'][test.base_engine]['private'],
     }
 
+    # SPSA (rshogi ラッパー) の TUNE ビルド: ワーカーはビルド前にこの .tune を
+    # ソースへ当てて、パラメータを USI option 化したバイナリを作る
+    if test.test_mode == 'SPSA' and (kit := (test.spsa or {}).get('tune_kit')):
+        tune_payload = {
+            'name'        : kit['name'],
+            'sha'         : kit['sha'],
+            'tune_text'   : kit['tune_text'],
+            'params_text' : kit['params_text'],
+        }
+        workload['test']['dev' ]['tune'] = tune_payload
+        workload['test']['base']['tune'] = tune_payload
+
     workload['distribution'] = game_distribution(test, machine)
     workload['spsa']         = spsa_to_dictionary(test, machine)
 

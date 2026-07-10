@@ -1,0 +1,82 @@
+{% extends "OpenBench/base.html" %}
+
+{% load static %}
+
+{% block content %}
+
+    <h3>.tune キット</h3>
+
+    <p>
+        やねうら王のソースにTUNEマクロを注入して、探索パラメータをUSIオプション化する
+        パッチ定義 (<code>.tune</code>) を管理します。SPSAチューニング作成でキットを選ぶと、
+        ワーカーがビルド前にソースへパッチを当てて <b>TUNEビルド</b> を作り、そのまま
+        rshogi の spsa を回します。masterが進んでソースがずれたら、キットページの
+        「照合」→「数値ドリフトを自動追随」で更新します。
+    </p>
+
+    <p>
+        <code>.tune</code> の書式は <code>Scripts/tune/</code> の tune.py と同じ
+        (<code>#set file</code> / <code>#context 名前</code> / <code>123@</code> マーカー /
+        <code>#add マーカー</code>)。<code>.params</code> は省略すると .tune から自動生成されます
+        (初期値=ソースの数値、レンジ=0〜2倍、step=可動域の1/20)。
+    </p>
+
+    <form method="POST" action="/tunekits/">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create">
+        <div class="form w-100">
+            <div class="col-full">
+                <div class="row">
+                    <label for="engine">エンジン</label>
+                    <select id="engine" name="engine">
+                        {% for engine in config.engines %}
+                            <option value="{{ engine }}">{{ engine }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="row">
+                    <label for="name">キット名</label>
+                    <input id="name" type="text" name="name" placeholder="fuuppi">
+                </div>
+                <div class="row">
+                    <label for="tune_text">.tune の内容</label>
+                    <textarea id="tune_text" name="tune_text" rows="12" style="font-family: monospace;"
+                              placeholder="#set file engine\yaneuraou-engine\yaneuraou-search.cpp&#10;#set declaration %%TUNE_DECLARATION%%&#10;#set options %%TUNE_OPTIONS%%&#10;#context aspiration_window&#10;&#10;delta = 5@ + ..."></textarea>
+                </div>
+                <div class="row">
+                    <label for="params_text">.params (任意)</label>
+                    <textarea id="params_text" name="params_text" rows="6" style="font-family: monospace;"
+                              placeholder="(空欄なら .tune から自動生成。既存の .params があれば貼ると値・レンジが引き継がれます)"></textarea>
+                </div>
+                <input type="submit" value="キットを作成" class="anchorbutton btn-blue w-100">
+            </div>
+        </div>
+    </form>
+
+    <br>
+
+    <h3>登録済みキット</h3>
+
+    <table class="hoverable wrappable">
+        <tr class="table-header">
+            <th>エンジン</th>
+            <th>名前</th>
+            <th>作成者</th>
+            <th>更新</th>
+            <th>操作</th>
+        </tr>
+
+        {% for kit in kits %}
+            <tr>
+                <td>{{kit.engine}}</td>
+                <td><a href="/tunekits/{{kit.id}}/">{{kit.name}}</a></td>
+                <td>{{kit.author}}</td>
+                <td class="timestamp">{{kit.updated|date:'U'}}</td>
+                <td><a class="anchorbutton btn-blue" href="/tunekits/{{kit.id}}/">開く</a></td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="5">まだキットがありません</td></tr>
+        {% endfor %}
+    </table>
+
+{% endblock %}

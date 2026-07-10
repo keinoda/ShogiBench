@@ -66,6 +66,12 @@
                     <tr><td class="td-label">対象絞り込み</td><td class="engine-options">{{workload.spsa.active_regex}}</td></tr>
                 {% endif %}
                 <tr><td class="td-label">名前マッピング</td><td>{% if workload.spsa.mapping == "YO" %}YaneuraOu (yo_rshogi_mapping.toml){% else %}なし{% endif %}</td></tr>
+                {% if workload.spsa.tune_kit %}
+                    <tr><td class="td-label">.tuneキット</td><td>
+                        <a href="/tunekits/{{workload.spsa.tune_kit.id}}/">{{workload.spsa.tune_kit.name}}</a>
+                        <span class="engine-options">(スナップショット {{workload.spsa.tune_kit.sha}} / ワーカーがTUNEビルドを作成)</span>
+                    </td></tr>
+                {% endif %}
                 {% if workload.spsa.early_stop.patience %}
                     <tr><td class="td-label">早期停止</td><td>patience={{workload.spsa.early_stop.patience}},
                         avg|update|≦{{workload.spsa.early_stop.avg_abs_update}},

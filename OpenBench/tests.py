@@ -1271,4 +1271,273 @@ class SpsaRshogiLifecycleTests(TestCase):
         self.assertContains(response, 'spsa_total_pairs')
         self.assertContains(response, 'spsa_batch_pairs')
         self.assertContains(response, 'spsa_mapping')
+        self.assertContains(response, 'spsa_tune_kit')
         self.assertNotContains(response, 'spsa_reporting_type')
+
+
+MINI_TUNE = '''#set file engine\\search.cpp
+#set declaration %%TUNE_DECLARATION%%
+#set options %%TUNE_OPTIONS%%
+#context futility
+
+if (eval >= beta + 100@ * depth - 25@2)
+    return eval;
+
+#context razoring
+
+if (eval < alpha - 500@)
+    continue;
+'''
+
+MINI_SOURCE = '''
+if (eval >= beta + 100 * depth - 25)
+    return eval;
+
+if (eval < alpha - 500)
+    continue;
+
+// %%TUNE_DECLARATION%%
+// %%TUNE_OPTIONS%%
+'''
+
+# futility の定数がドリフトした現行ソース
+MINI_SOURCE_DRIFT = MINI_SOURCE.replace('100 * depth', '120 * depth')
+
+class TuneKitTests(TestCase):
+
+    ## .tune キットの GUI 管理: 作成 (params 自動生成)、照合、自動追随、同期、権限
+
+    def setUp(self):
+        self.alice = User.objects.create_user('alice', 'a@example.com', 'pw-alice')
+        Profile.objects.create(user=self.alice, enabled=True, approver=False)
+        self.client.login(username='alice', password='pw-alice')
+
+    def create_kit(self, **overrides):
+        form = {
+            'action'    : 'create',
+            'engine'    : 'YaneuraOu-nagisa',
+            'name'      : 'mini',
+            'tune_text' : MINI_TUNE,
+        }
+        form.update(overrides)
+        return self.client.post('/tunekits/', form)
+
+    def test_create_generates_params(self):
+
+        response = self.create_kit()
+        self.assertEqual(response.status_code, 302)
+
+        from OpenBench.models import TuneKit
+        kit = TuneKit.objects.get(engine='YaneuraOu-nagisa', name='mini')
+
+        # .params が .tune から自動生成される (tune.py と同じ既定レンジ)
+        self.assertIn('futility_1, int, 100, 0, 200, 10, 0.002', kit.params_text)
+        self.assertIn('futility_2, int, 25, 0, 50', kit.params_text)
+        self.assertIn('razoring_1, int, 500, 0, 1000, 50, 0.002', kit.params_text)
+
+        # 一覧・詳細ページが描画できる
+        self.assertContains(self.client.get('/tunekits/'), 'mini')
+        self.assertContains(self.client.get('/tunekits/%d/' % (kit.id)), 'futility_1')
+
+    def test_create_rejects_bad_tune(self):
+
+        self.create_kit(tune_text='no directives here')
+        from OpenBench.models import TuneKit
+        self.assertFalse(TuneKit.objects.exists())
+
+    def test_existing_params_are_kept_on_create(self):
+
+        pasted = 'futility_1, int, 150, 60, 300, 12, 0.002 // 前回到達値\n'
+        self.create_kit(params_text=pasted)
+
+        from OpenBench.models import TuneKit
+        kit = TuneKit.objects.get(name='mini')
+        self.assertIn('futility_1, int, 150, 60, 300, 12, 0.002', kit.params_text)
+        self.assertIn('前回到達値', kit.params_text)
+        self.assertIn('futility_2', kit.params_text) # 足りない分は自動追加
+
+    @patch('OpenBench.tune_kits.fetch_tune_sources')
+    def test_check_action_classifies_contexts(self, mock_fetch):
+
+        self.create_kit()
+        from OpenBench.models import TuneKit
+        kit = TuneKit.objects.get(name='mini')
+
+        mock_fetch.return_value = { 'engine/search.cpp' : MINI_SOURCE_DRIFT }
+        response = self.client.post('/tunekits/%d/' % (kit.id), {
+            'action' : 'check', 'repo' : 'https://github.com/keinoda/YaneuraOu', 'branch' : 'master' })
+
+        self.assertContains(response, 'NUMDRIFT')
+        self.assertContains(response, '100-&gt;120')
+        # マーカーも照合される
+        self.assertContains(response, 'marker %%TUNE_OPTIONS%%')
+
+    @patch('OpenBench.tune_kits.fetch_tune_sources')
+    def test_retune_action_updates_tune_text(self, mock_fetch):
+
+        self.create_kit()
+        from OpenBench.models import TuneKit
+        kit = TuneKit.objects.get(name='mini')
+
+        mock_fetch.return_value = { 'engine/search.cpp' : MINI_SOURCE_DRIFT }
+        self.client.post('/tunekits/%d/' % (kit.id), {
+            'action' : 'retune', 'repo' : 'https://github.com/keinoda/YaneuraOu', 'branch' : 'master' })
+
+        kit.refresh_from_db()
+        self.assertIn('120@ * depth', kit.tune_text)
+
+        # 追随後に照合すると全 EXACT
+        import OpenBench.tune_kits
+        results, counts = OpenBench.tune_kits.check_kit(
+            kit.tune_text, kit.engine, 'https://github.com/keinoda/YaneuraOu', 'master')
+        self.assertEqual(counts['NUMDRIFT'], 0)
+        self.assertEqual(counts['MISSING'], 0)
+
+    def test_sync_params_after_tune_edit(self):
+
+        self.create_kit()
+        from OpenBench.models import TuneKit
+        kit = TuneKit.objects.get(name='mini')
+
+        # razoring を .tune から外して保存 → 同期で NOT USED になる
+        edited = MINI_TUNE.split('#context razoring')[0]
+        self.client.post('/tunekits/%d/' % (kit.id), {
+            'action' : 'save', 'tune_text' : edited, 'params_text' : kit.params_text })
+        self.client.post('/tunekits/%d/' % (kit.id), { 'action' : 'sync_params' })
+
+        kit.refresh_from_db()
+        self.assertIn('razoring_1, int, 500, 0, 1000, 50, 0.002 [[NOT USED]]', kit.params_text)
+
+    def test_edit_requires_author_or_approver(self):
+
+        self.create_kit()
+        from OpenBench.models import TuneKit
+        kit = TuneKit.objects.get(name='mini')
+
+        mallory = User.objects.create_user('mallory', 'm@example.com', 'pw-m')
+        Profile.objects.create(user=mallory, enabled=True, approver=False)
+        client = Client()
+        client.login(username='mallory', password='pw-m')
+
+        client.post('/tunekits/%d/' % (kit.id), {
+            'action' : 'save', 'tune_text' : 'hijacked', 'params_text' : '' })
+        kit.refresh_from_db()
+        self.assertNotEqual(kit.tune_text, 'hijacked')
+
+        client.post('/tunekits/%d/' % (kit.id), { 'action' : 'delete' })
+        self.assertTrue(TuneKit.objects.filter(id=kit.id).exists())
+
+        # 本人は削除できる
+        self.client.post('/tunekits/%d/' % (kit.id), { 'action' : 'delete' })
+        self.assertFalse(TuneKit.objects.filter(id=kit.id).exists())
+
+class SpsaTuneKitIntegrationTests(SpsaRshogiLifecycleTests):
+
+    ## SPSA 作成 ⇔ .tune キットの統合: キット選択で TUNE ビルドがワークロードに
+    ## 載ること、作成時の自動照合ゲート、名前integrityの検査
+
+    KIT_PARAMS = ('futility_1, int, 100, 0, 200, 10, 0.002\n'
+                  'futility_2, int, 25, 0, 50, 2.5, 0.002\n'
+                  'razoring_1, int, 500, 0, 1000, 50, 0.002\n')
+
+    def setUp(self):
+        super().setUp()
+        from OpenBench.models import TuneKit
+        self.kit = TuneKit.objects.create(
+            engine='YaneuraOu-nagisa', name='mini', author='alice',
+            tune_text=MINI_TUNE, params_text=self.KIT_PARAMS)
+
+    def kit_form(self, **overrides):
+        form = self.tune_form(
+            spsa_tune_kit=str(self.kit.id),
+            spsa_inputs=self.KIT_PARAMS,
+            spsa_active_regex='',
+            spsa_mapping='NONE')
+        form.update(overrides)
+        return form
+
+    def create_kit_tune(self, sources=None, **overrides):
+        with patch('OpenBench.tune_kits.fetch_tune_sources',
+                   return_value=(sources if sources is not None else { 'engine/search.cpp' : MINI_SOURCE })), \
+             patch('OpenBench.workloads.verify_workload.collect_github_info',
+                   return_value=(self.github_info(), True)):
+            return self.client.post('/tune/new/', self.kit_form(**overrides))
+
+    def test_kit_tune_carries_tune_build_payload(self):
+
+        response = self.create_kit_tune()
+        self.assertIn('/index/', response.url)
+
+        test = Test.objects.get(test_mode='SPSA')
+        snapshot = test.spsa['tune_kit']
+        self.assertEqual(snapshot['name'], 'mini')
+        self.assertEqual(snapshot['sha'], self.kit.content_sha())
+        self.assertIn('futility', snapshot['tune_text'])
+
+        # ワークロードの dev/base に TUNE ビルド指示が載る
+        test.approved = True
+        test.save()
+        machine  = self.make_machine()
+        workload = self.assign(machine)['workload']
+
+        self.assertEqual(workload['test']['dev']['tune']['name'], 'mini')
+        self.assertEqual(workload['test']['dev']['tune']['sha'], self.kit.content_sha())
+        self.assertIn('100@', workload['test']['dev']['tune']['tune_text'])
+        self.assertEqual(workload['test']['base']['tune'], workload['test']['dev']['tune'])
+
+        # キット表示がチューニングページに出る
+        self.assertContains(self.client.get('/tune/%d/' % (test.id)), '.tuneキット')
+
+    def test_creation_blocked_when_kit_drifted(self):
+
+        response = self.create_kit_tune(sources={ 'engine/search.cpp' : MINI_SOURCE_DRIFT })
+        self.assertIn('/tune/new/', response.url)
+        self.assertFalse(Test.objects.filter(test_mode='SPSA').exists())
+
+    def test_creation_blocked_when_markers_missing(self):
+
+        # 上流の素の YaneuraOu (マーカー無し) を指してしまったケース
+        response = self.create_kit_tune(sources={ 'engine/search.cpp' :
+            MINI_SOURCE.replace('%%TUNE_DECLARATION%%', '').replace('%%TUNE_OPTIONS%%', '') })
+        self.assertIn('/tune/new/', response.url)
+
+    def test_creation_blocked_on_param_name_mismatch(self):
+
+        # .tune のパラメータが SPSA 入力に無い (黙って残すと死にパラメータになる)
+        dropped = self.KIT_PARAMS.replace('razoring_1, int, 500, 0, 1000, 50, 0.002\n', '')
+        response = self.create_kit_tune(spsa_inputs=dropped)
+        self.assertIn('/tune/new/', response.url)
+
+        # [[NOT USED]] で明示的に外すのは許される
+        excluded = self.KIT_PARAMS.replace(
+            'razoring_1, int, 500, 0, 1000, 50, 0.002',
+            'razoring_1, int, 500, 0, 1000, 50, 0.002 [[NOT USED]]')
+        response = self.create_kit_tune(spsa_inputs=excluded)
+        self.assertIn('/index/', response.url)
+
+    def test_creation_blocked_with_yo_mapping(self):
+
+        response = self.create_kit_tune(spsa_mapping='YO')
+        self.assertIn('/tune/new/', response.url)
+
+    def test_creation_blocked_when_range_widened_inline(self):
+
+        # TUNE ビルドの USI レンジはキットの .params から作られるので、
+        # SPSA 入力側でレンジを広げると setoption が弾かれる → 作成時に拒否
+        widened = self.KIT_PARAMS.replace(
+            'futility_1, int, 100, 0, 200, 10, 0.002',
+            'futility_1, int, 100, 0, 400, 10, 0.002')
+        response = self.create_kit_tune(spsa_inputs=widened)
+        self.assertIn('/tune/new/', response.url)
+
+        # 狭める分には問題ない
+        narrowed = self.KIT_PARAMS.replace(
+            'futility_1, int, 100, 0, 200, 10, 0.002',
+            'futility_1, int, 100, 50, 150, 10, 0.002')
+        response = self.create_kit_tune(spsa_inputs=narrowed)
+        self.assertIn('/index/', response.url)
+
+    def test_kit_engine_must_match(self):
+
+        response = self.create_kit_tune(dev_engine='YaneuraOu')
+        self.assertIn('/tune/new/', response.url)
