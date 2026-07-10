@@ -477,12 +477,17 @@ def monitor_spsa(config, reporter, base_dir, run_dir, proc, attached_pid, offset
 
             # 一時的な通信失敗は握りつぶして続行する。それ以外
             # (Bad Client Version / サーバ設定変更など) は上へ投げる。
-            # spsa 本体は殺さない: ワーカーが再起動しても再接続できる
+            # spsa 本体は殺さない: ワーカーが再起動しても再接続できる。
+            # 例外: ワーカーキー失効による自己終了 (SystemExit) は恒久停止
+            # なので、走りっぱなしの spsa も止めてから終了する
             try:
                 response = report_progress(config, reporter, run_dir, offsets, finished=False)
             except (requests.exceptions.RequestException, ValueError) as error:
                 print ('[Note] Failed to report SPSA progress (%s)' % (error))
                 continue
+            except SystemExit:
+                stop_spsa_process(spsa_pid(proc, attached_pid), engine_binary)
+                raise
 
             # サーバからの停止指示 (GUI の停止/削除、Worker Key 失効など)。
             # 状態は残るので、再開されれば続きから走る

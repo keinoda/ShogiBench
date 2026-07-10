@@ -13,41 +13,127 @@
 #   SHOGIBENCH_REPO_URL  Repo to fetch the client from
 #   SHOGIBENCH_REPO_REF  Branch / tag of the repo
 #   SHOGIBENCH_DIR       Where to place the client checkout
+#
+# One machine runs at most ONE worker: re-running this script takes over
+# (stops any previous bootstrap loop, its installers, and its client) before
+# starting fresh. The client additionally holds a lock file, so even a loop
+# this script cannot see can never produce a second concurrent worker.
+#
+# Exit-code contract with client.py (worker.py):
+#   65  another worker already owns this machine -> do not restart
+#   66  worker key was disabled/deleted, or openbench.exit -> do not restart
 
-set -euo pipefail
+PIDFILE="$HOME/.shogibench-worker.pgid"
 
-: "${OPENBENCH_SERVER:?OPENBENCH_SERVER is required (e.g. https://shogibench.fly.dev)}"
-: "${OPENBENCH_USERNAME:?OPENBENCH_USERNAME is required}"
-: "${OPENBENCH_PASSWORD:?OPENBENCH_PASSWORD is required (use a Worker Key token)}"
+self_pgid() {
+    ps -o pgid= -p $$ 2>/dev/null | tr -d ' '
+}
 
-SHOGIBENCH_REPO_URL="${SHOGIBENCH_REPO_URL:-https://github.com/keinoda/ShogiBench}"
-SHOGIBENCH_REPO_REF="${SHOGIBENCH_REPO_REF:-shogi}"
-SHOGIBENCH_DIR="${SHOGIBENCH_DIR:-$HOME/shogibench-worker}"
-SHOGIBENCH_THREADS="${SHOGIBENCH_THREADS:-$(nproc)}"
-SHOGIBENCH_SOCKETS="${SHOGIBENCH_SOCKETS:-1}"
+self_ancestors() {
 
-export DEBIAN_FRONTEND=noninteractive
+    # 自分の祖先 PID の一覧 (sshd やログ収集シェルなど)。コマンドラインに
+    # たまたま setup_worker.sh の文字列を含む祖先を巻き込み殺さないための除外リスト
+    local pid=$$ ppid
+    while [ -n "$pid" ] && [ "$pid" != "1" ] && [ "$pid" != "0" ]; do
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ -n "$ppid" ] || break
+        echo "$ppid"
+        pid="$ppid"
+    done
+}
 
-# Stream the client's output into the log as it happens. Piped Python
-# buffers stdout otherwise, which makes a healthy worker look silent
-export PYTHONUNBUFFERED=1
+is_protected_pid() {
+    local pid="$1"
+    [ "$pid" = "$$" ] && return 0
+    case " $PROTECTED_PIDS " in
+        *" $pid "*) return 0 ;;
+    esac
+    return 1
+}
 
-SUDO=""
-if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null; then
-    SUDO="sudo"
-fi
+kill_group() {
 
-# Stop any worker started by an earlier run of this script, so re-running
-# it (e.g. from the /workers/ page) never leaves two loops behind
-for pid in $(pgrep -f '[s]hogibench_setup.sh|[s]etup_worker.sh' 2>/dev/null || true); do
-    [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ] && kill "$pid" 2>/dev/null || true
-done
-pkill -f '[c]lient.py' 2>/dev/null || true
+    # Terminate every member of a process group. The plain group signal
+    # comes first, backed up by pkill: some sandboxed/containerized
+    # environments deliver kill(-pgid) to the leader only. Callers ensure
+    # the group is neither ours nor an ancestor's, so pkill -g is safe
+    local pgid="$1"
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+    pkill -TERM -g "$pgid" 2>/dev/null || true
+}
 
-# A single failed apt/rustup call must not abort the whole bootstrap and
-# leave nothing registered; from here we handle errors ourselves and
-# retry, so a transient network hiccup self-heals instead of wedging.
-set +e
+kill_group_or_pid() {
+
+    # Kill a process group if we can identify it (takes out installers and
+    # engines too); fall back to the single pid. Never touch pgid 1, our own
+    # group, or a group led by one of our ancestors
+    local pid="$1" pgid
+    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+
+    case "$pgid" in
+        ''|*[!0-9]*) pgid="" ;;
+    esac
+
+    if [ -n "$pgid" ] && [ "$pgid" != "1" ] && [ "$pgid" != "$(self_pgid)" ] \
+            && ! is_protected_pid "$pgid"; then
+        kill_group "$pgid"
+    else
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
+}
+
+stop_previous_workers() {
+
+    # 自分と自分の祖先は絶対に殺さない
+    PROTECTED_PIDS="$(self_ancestors | tr '\n' ' ')"
+
+    # 1) Modern bootstraps record their process group here; killing the
+    #    group stops the loop, its installers, the client, and any engines
+    if [ -f "$PIDFILE" ]; then
+        local oldpgid
+        oldpgid=$(cat "$PIDFILE" 2>/dev/null | tr -d ' ')
+        case "$oldpgid" in
+            ''|*[!0-9]*) : ;;
+            1) : ;;
+            *)
+                if [ "$oldpgid" != "$(self_pgid)" ] && ! is_protected_pid "$oldpgid"; then
+                    kill_group "$oldpgid"
+                fi ;;
+        esac
+    fi
+
+    # 2) Older bootstraps, found by script name in the command line
+    local pid
+    for pid in $(pgrep -f '[s]hogibench_setup.sh|[s]etup_worker.sh' 2>/dev/null || true); do
+        is_protected_pid "$pid" && continue
+        kill_group_or_pid "$pid"
+    done
+
+    # 3) Bootstraps started via `curl | bash` show up as a bare "bash" and
+    #    are invisible to (2); find their restart loop through the running
+    #    client's parent shell instead, then stop the client itself
+    local cpid ppid pcomm
+    for cpid in $(pgrep -f '[c]lient.py' 2>/dev/null || true); do
+        is_protected_pid "$cpid" && continue
+        ppid=$(ps -o ppid= -p "$cpid" 2>/dev/null | tr -d ' ')
+        if [ -n "$ppid" ] && [ "$ppid" != "1" ] && ! is_protected_pid "$ppid"; then
+            pcomm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ')
+            case "$pcomm" in
+                bash|sh|dash) kill_group_or_pid "$ppid" ;;
+            esac
+        fi
+        kill -TERM "$cpid" 2>/dev/null || true
+    done
+
+    # 4) Give everything a moment to exit, then finish off stragglers, so
+    #    the new run never races an old apt/dpkg lock or a half-dead client
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -f '[c]lient.py' >/dev/null 2>&1 || break
+        sleep 1
+    done
+    pkill -KILL -f '[c]lient.py' 2>/dev/null || true
+}
 
 clang_major() {
     command -v clang++ >/dev/null || { echo 0; return; }
@@ -104,6 +190,58 @@ toolchain_ready() {
     [ "$(clang_major)" -ge 16 ] || { echo "clang++ >= 16 missing (engines need it)"; return 1; }
     return 0
 }
+
+# For tests: expose the functions above without running the bootstrap
+if [ "${SHOGIBENCH_SOURCE_ONLY:-0}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+set -euo pipefail
+
+: "${OPENBENCH_SERVER:?OPENBENCH_SERVER is required (e.g. https://shogibench.fly.dev)}"
+: "${OPENBENCH_USERNAME:?OPENBENCH_USERNAME is required}"
+: "${OPENBENCH_PASSWORD:?OPENBENCH_PASSWORD is required (use a Worker Key token)}"
+
+SHOGIBENCH_REPO_URL="${SHOGIBENCH_REPO_URL:-https://github.com/keinoda/ShogiBench}"
+SHOGIBENCH_REPO_REF="${SHOGIBENCH_REPO_REF:-shogi}"
+SHOGIBENCH_DIR="${SHOGIBENCH_DIR:-$HOME/shogibench-worker}"
+SHOGIBENCH_THREADS="${SHOGIBENCH_THREADS:-$(nproc)}"
+SHOGIBENCH_SOCKETS="${SHOGIBENCH_SOCKETS:-1}"
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Stream the client's output into the log as it happens. Piped Python
+# buffers stdout otherwise, which makes a healthy worker look silent
+export PYTHONUNBUFFERED=1
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null; then
+    SUDO="sudo"
+fi
+
+# Become a session/process-group leader, so that "this bootstrap and every
+# process it ever starts" is exactly one process group. That is what makes
+# the takeover above complete: killing the recorded group cannot miss an
+# installer, the client, or an engine
+if [ "$(self_pgid)" != "$$" ] && command -v setsid >/dev/null && [ -f "$0" ]; then
+    exec setsid bash "$0" "$@"
+fi
+
+# Stop any worker started by an earlier run (or an earlier failed attempt),
+# so re-running this script never leaves two loops behind
+stop_previous_workers
+
+# Record our process group for the next takeover. Only useful when we truly
+# lead our own group; otherwise the name-based sweep still covers us
+if [ "$(self_pgid)" = "$$" ]; then
+    echo "$$" > "$PIDFILE"
+    trap 'rm -f "$PIDFILE"' EXIT
+fi
+
+# A single failed apt/rustup call must not abort the whole bootstrap and
+# leave nothing registered; from here we handle errors ourselves and
+# retry, so a transient network hiccup self-heals instead of wedging.
+set +e
 
 # Install, retrying with backoff. A first attempt often fails on a slow
 # mirror; without this the worker would spin forever on a broken toolchain.
@@ -162,8 +300,17 @@ pip3 install --break-system-packages -r requirements.txt 2>/dev/null \
 # self-heal instead of spinning forever on the same broken state.
 while true; do
     STARTED=$(date +%s)
-    python3 client.py -T "$SHOGIBENCH_THREADS" -N "$SHOGIBENCH_SOCKETS" || true
+    python3 client.py -T "$SHOGIBENCH_THREADS" -N "$SHOGIBENCH_SOCKETS"
+    CODE=$?
     RAN=$(( $(date +%s) - STARTED ))
+
+    # Deliberate shutdowns must not be "healed" by restarting:
+    #   65 = another worker owns this machine (duplicate-launch protection)
+    #   66 = the worker key was disabled/deleted, or openbench.exit was used
+    case "$CODE" in
+        65) echo "[setup_worker] another worker is already running here; exiting"; exit 0 ;;
+        66) echo "[setup_worker] worker was shut down (key revoked or openbench.exit); exiting"; exit 0 ;;
+    esac
 
     if [ "$RAN" -lt 10 ]; then
         echo "[setup_worker] client exited after ${RAN}s (startup failure); re-checking toolchain"
@@ -171,6 +318,6 @@ while true; do
         toolchain_ready || echo "[setup_worker] toolchain still incomplete: $(toolchain_ready)"
     fi
 
-    echo "[setup_worker] client exited, restarting in 15s"
+    echo "[setup_worker] client exited with code $CODE, restarting in 15s"
     sleep 15
 done

@@ -131,25 +131,81 @@ class WorkerKeyAuthTests(TestCase):
     def test_revoked_key_cuts_off_the_session(self):
         from OpenBench.models import Machine
         from OpenBench.utils import machine_key_revoked
-        from OpenBench.workloads.get_workload import get_workload
+        from OpenBench.workloads.get_workload import get_workload, SHUTDOWN_ERROR
 
         machine = Machine.objects.create(
             user=self.user, info={ 'worker_key_id' : self.key.id })
         self.assertFalse(machine_key_revoked(machine))
 
-        # Disabling the key revokes the session
+        # Disabling the key revokes the session: the worker is told
+        # explicitly, so it can shut itself down (wrapper loop included)
         self.key.enabled = False
         self.key.save()
         self.assertTrue(machine_key_revoked(machine))
-        self.assertEqual(get_workload(None, machine), {})
+        self.assertEqual(get_workload(None, machine), { 'error' : SHUTDOWN_ERROR })
 
         # Deleting it likewise
         self.key.delete()
         self.assertTrue(machine_key_revoked(machine))
+        self.assertEqual(get_workload(None, machine), { 'error' : SHUTDOWN_ERROR })
 
         # Password-opened sessions record no key and never revoke this way
         legacy = Machine.objects.create(user=self.user, info={})
         self.assertFalse(machine_key_revoked(legacy))
+
+    def test_stopped_machine_idles_without_shutdown(self):
+
+        # /workers/ の一時停止は復帰前提なので、仕事を配らないだけで
+        # ワーカーを終了させない (エラーではなく空を返す)
+        from OpenBench.models import Machine
+        from OpenBench.workloads.get_workload import get_workload
+
+        machine = Machine.objects.create(
+            user=self.user, info={ 'worker_key_id' : self.key.id, 'stop_requested' : True })
+        self.assertEqual(get_workload(None, machine), {})
+
+    def register(self, token=None, name='test'):
+        import json
+        info = {
+            'compilers'   : {}, 'cpu_flags' : [], 'tokens' : {},
+            'os_name'     : 'Linux', 'concurrency' : 1,
+            'client_ver'  : 0, 'mac_address' : 'AA:BB',
+            'machine_name': name,
+        }
+        if token:
+            info['machine_token'] = token
+        return self.client.post('/clientWorkerInfo/', {
+            'system_info' : json.dumps(info), **self.creds() }).json()
+
+    def test_reregistration_reuses_machine_row(self):
+
+        # クラッシュループやクライアント更新で再登録が繰り返されても、
+        # 同じ machine_token なら Machine 行は増えない (マシン一覧の無限増殖対策)
+        from OpenBench.models import Machine
+
+        first  = self.register(token='a' * 32)
+        second = self.register(token='a' * 32)
+        third  = self.register(token='a' * 32)
+
+        self.assertEqual(first['machine_id'], second['machine_id'])
+        self.assertEqual(first['machine_id'], third['machine_id'])
+        self.assertEqual(Machine.objects.filter(user=self.user).count(), 1)
+
+        # secret はセッションごとに更新される
+        self.assertNotEqual(first['secret'], second['secret'])
+
+        # 別のインスタンス (別トークン) は別の行になる
+        other = self.register(token='b' * 32)
+        self.assertNotEqual(first['machine_id'], other['machine_id'])
+        self.assertEqual(Machine.objects.filter(user=self.user).count(), 2)
+
+    def test_old_clients_without_token_still_register(self):
+
+        from OpenBench.models import Machine
+        first  = self.register()
+        second = self.register()
+        self.assertNotEqual(first['machine_id'], second['machine_id'])
+        self.assertEqual(Machine.objects.filter(user=self.user).count(), 2)
 
 class GithubLookupTests(TestCase):
 

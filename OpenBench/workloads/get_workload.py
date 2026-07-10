@@ -45,12 +45,20 @@ def network_aux_files(engine, sha):
 
 from django.db import transaction
 
+SHUTDOWN_ERROR = 'Worker key disabled or deleted. Shut down.'
+
 def get_workload(request, machine):
 
-    # Machines stopped from the /workers/ page, or whose Worker Key has
-    # since been deleted or disabled, receive no new work
-    if machine.info.get('stop_requested') or OpenBench.utils.machine_key_revoked(machine):
+    # Machines stopped from the /workers/ page receive no new work, but may
+    # be resumed later, so the worker just keeps idling
+    if machine.info.get('stop_requested'):
         return {}
+
+    # A deleted or disabled Worker Key is permanent: tell the worker
+    # explicitly so it can shut itself down (including its restart wrapper),
+    # instead of polling forever with dead credentials
+    if OpenBench.utils.machine_key_revoked(machine):
+        return { 'error' : SHUTDOWN_ERROR }
 
     # Select a workload from the possible ones, if we can
     if not (test := select_workload(request, machine)):

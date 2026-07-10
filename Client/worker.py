@@ -60,7 +60,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 54 # Client version to send to the Server
+CLIENT_VERSION   = 55 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -68,6 +68,107 @@ REPORT_INTERVAL  = 30 # Seconds between reports to the Server
 
 IS_WINDOWS = platform.system() == 'Windows' # Don't touch this
 IS_LINUX   = platform.system() != 'Windows' # Don't touch this
+
+# setup_worker.sh のループと取り決めた終了コード。これらで終了したときは
+# ラッパーはクライアントを再起動しない
+EXIT_DUPLICATE = 65 # 同じディレクトリで別のワーカーが稼働中
+EXIT_SHUTDOWN  = 66 # ワーカーキー失効 / openbench.exit による恒久停止
+
+# 単一インスタンスロックの保持用 (プロセス生存中は開きっぱなしにする)
+WORKER_LOCK = None
+
+def acquire_single_instance_lock():
+
+    ## 同じ Client ディレクトリで複数のワーカーが同時に走ることを防ぐ。
+    ## 接続のリトライで積み上がった古い起動ループが後から動き出しても、
+    ## ロックを取れずに即座に (再起動なしで) 終了する
+
+    global WORKER_LOCK
+
+    if IS_WINDOWS:
+        return
+
+    import fcntl
+
+    lock = open('.worker.lock', 'a')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        print ('[Error] Another worker is already running from this directory')
+        print ('[Error] Exiting to avoid duplicate workers (exit code %d)' % (EXIT_DUPLICATE))
+        sys.exit(EXIT_DUPLICATE)
+
+    WORKER_LOCK = lock
+
+def shutdown_if_revoked(error_message):
+
+    ## サーバが「認証情報が無効 (ワーカーキーの無効化/削除、パスワード誤り)」を
+    ## 返したときは、リトライせずワーカーごと終了する。終了コード 66 により
+    ## setup_worker.sh の再起動ループも止まる
+
+    markers = [ 'Bad Credentials', 'Worker key disabled or deleted' ]
+
+    if any(marker in str(error_message) for marker in markers):
+        print ('[Error] Server rejected our credentials: %s' % (error_message))
+        print ('[Error] Worker key was likely disabled or deleted. Shutting down (exit code %d)' % (EXIT_SHUTDOWN))
+        sys.exit(EXIT_SHUTDOWN)
+
+def load_machine_token():
+
+    ## このインスタンスを一意に識別する永続トークン。サーバはこれを見て
+    ## 「同じマシンの再登録」を既存の Machine 行の再利用にする (クラッシュ
+    ## ループやバージョン更新ループでマシン一覧が無限に増えるのを防ぐ)。
+    ## MAC アドレスは Docker コンテナ間で衝突しうるので使わない
+
+    try:
+        with open('.machine_token') as fin:
+            token = fin.read().strip()
+        if re.match(r'^[0-9a-f]{32}$', token):
+            return token
+    except OSError:
+        pass
+
+    token = uuid.uuid4().hex
+    with open('.machine_token', 'w') as fout:
+        fout.write(token)
+    return token
+
+def wait_for_server_version(config):
+
+    ## サーバが期待する client_version と自分の CLIENT_VERSION を登録前に照合する。
+    ##
+    ## - サーバが古い (デプロイ待ち) 間は、登録せずにここで静かに待つ。
+    ##   以前は「登録 → Bad Client Version → 再ダウンロード → 再登録」を数秒周期で
+    ##   繰り返し、そのたびに新しい Machine 行を作ってマシン一覧が無限に増えていた
+    ## - サーバが新しいときは BadVersionException でクライアント更新へ回す
+
+    while True:
+
+        try:
+            target   = utils.url_join(config.server, 'clientVersionRef')
+            payload  = { 'username' : config.username, 'password' : config.password }
+            response = requests.post(target, data=payload, timeout=TIMEOUT_HTTP).json()
+        except Exception:
+            return # 照合できないだけなら通常フローに任せる
+
+        if 'error' in response:
+            shutdown_if_revoked(response['error'])
+            return
+
+        expected = int(response.get('client_version', CLIENT_VERSION))
+
+        if expected == CLIENT_VERSION:
+            return
+
+        if expected > CLIENT_VERSION:
+            print ('[Note] Server expects client v%d, we are v%d: updating' % (expected, CLIENT_VERSION))
+            raise BadVersionException()
+
+        # サーバの方が古い = サーバの再デプロイがまだ。スパムせず待つ
+        print ('[Note] Server expects client v%d but we are v%d' % (expected, CLIENT_VERSION))
+        print ('[Note] Server deploy appears to be behind; waiting 60s before rechecking')
+        time.sleep(60)
 
 
 class Configuration:
@@ -256,6 +357,10 @@ class ServerReporter:
         # Throw all the way back to the client.py
         if 'Bad Client Version' in as_json.get('error', ''):
             raise BadVersionException()
+
+        # キー失効は恒久的なのでワーカーごと終了する
+        if 'error' in as_json:
+            shutdown_if_revoked(as_json['error'])
 
         # Some fatal error, forcing us out of the Workload
         if 'error' in as_json:
@@ -1116,6 +1221,7 @@ def server_configure_worker(config):
         'os_ver'         : config.os_ver,         # Release version of the OS
         'python_ver'     : config.python_ver,     # Python version running the Client
         'mac_address'    : config.mac_address,    # Used to softly verify the Machine IDs
+        'machine_token'  : load_machine_token(),  # Stable per-instance id, dedupes re-registration
         'logical_cores'  : config.logical_cores,  # Logical cores, to differentiate hyperthreads
         'physical_cores' : config.physical_cores, # Physical cores, to differentiate hyperthreads
         'ram_total_mb'   : config.ram_total_mb,   # Total RAM on the system, to avoid over assigning
@@ -1146,6 +1252,10 @@ def server_configure_worker(config):
     if 'Bad Client Version' in response.get('error', ''):
         raise BadVersionException();
 
+    # 認証拒否 (キーの無効化/削除) はリトライしても直らないので終了する
+    if 'error' in response:
+        shutdown_if_revoked(response['error'])
+
     # The 'error' header is included if there was an issue
     if 'error' in response:
         raise utils.OpenBenchFatalWorkerException(response['error'])
@@ -1170,6 +1280,10 @@ def server_request_workload(config):
     # Throw all the way back to the client.py
     if 'Bad Client Version' in response.get('error', ''):
         raise BadVersionException();
+
+    # キーが無効化/削除されたら、ポーリングを続けず終了する
+    if 'error' in response:
+        shutdown_if_revoked(response['error'])
 
     # Something very bad happened. Re-initialize the Client
     if 'error' in response:
@@ -1243,8 +1357,9 @@ def complete_workload(config):
             rr.send_errors(timestamp, runner_cnt)
             MatchRunner.kill_everything(dev_name, base_name)
 
-        # Kill everything during an Exception, but print it
-        except (Exception, KeyboardInterrupt):
+        # Kill everything during an Exception, but print it.
+        # SystemExit (キー失効による自己終了) でも対局を残さない
+        except (Exception, KeyboardInterrupt, SystemExit):
             abort_flag.set()
             MatchRunner.kill_everything(dev_name, base_name)
             raise
@@ -1674,6 +1789,14 @@ def run_openbench_worker(client_args):
 
     args   = parse_arguments(client_args) # Merge client.py and worker.py args
     config = Configuration(args)          # Holds System info, args, and Workload info
+
+    # 二重起動の防止 (接続リトライで積み上がった古い起動ループ対策)
+    acquire_single_instance_lock()
+
+    # サーバとクライアントのバージョンが噛み合うまで登録しない
+    # (サーバのデプロイ待ちで Machine 登録が無限に増えるのを防ぐ)
+    wait_for_server_version(config)
+
     try_forever(server_configure_fastchess, [config], fastchess_error)
     try_forever(server_configure_shogitest, [config], shogitest_error)
     try_forever(server_configure_worker, [config], setup_error)
@@ -1687,10 +1810,11 @@ def run_openbench_worker(client_args):
 
     while True:
 
-        # Check for exit signal via openbench.exit
+        # Check for exit signal via openbench.exit. Exit code 66 stops the
+        # setup_worker.sh restart loop as well, so this is a full stop
         if os.path.isfile('openbench.exit'):
             print('Exited via openbench.exit')
-            sys.exit()
+            sys.exit(EXIT_SHUTDOWN)
 
         try:
             # Cleanup on each workload request

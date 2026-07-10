@@ -195,8 +195,16 @@ SSH して以下を実行するだけです (`/workers/` ページのスニペ�
 export OPENBENCH_SERVER=https://<あなたのサーバー>/
 export OPENBENCH_USERNAME=<ユーザー名>
 export OPENBENCH_PASSWORD=<ワーカーキーのトークン>
-curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/worker/setup_worker.sh | bash
+curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/worker/setup_worker.sh -o /tmp/shogibench_setup.sh
+nohup bash /tmp/shogibench_setup.sh > ~/shogibench-worker.log 2>&1 &
 ```
+
+> **`curl ... | bash` で直接実行しないこと。** パイプ実行だとプロセス名が
+> ただの `bash` になり、再実行時の「前回の起動ループの掃除」が旧ループを
+> 見つけられません (過去にこれで、リトライのたびにループが積み上がり、
+> 詰まりが解消した瞬間に全部が一斉にワーカーを起動する事故がありました)。
+> 一度ファイルに保存してから実行してください。なお同じ理由の保険として、
+> ワーカー自体もロックファイルで二重起動を拒否します。
 
 チューニング用の環境変数:
 
@@ -207,21 +215,28 @@ curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/work
 | `SHOGIBENCH_REPO_URL` | このリポジトリ | クライアント取得元 |
 | `SHOGIBENCH_REPO_REF` | `shogi` | 取得するブランチ |
 
-### 3-5. マシンの一時停止(計算資源を返したいとき)
+### 3-5. マシンの一時停止と完全停止
 
-`/workers/` の「稼働中のマシン」で **停止** を押すだけです。ワーカーは
-約30秒ごとに必ず通信してくるので、次の通信で実行中の対局が中断され、
-以後そのマシンには仕事が配られなくなります(SSHは不要)。
+**一時停止**: `/workers/` の「稼働中のマシン」で **停止** を押すだけです。
+ワーカーは約30秒ごとに必ず通信してくるので、次の通信で実行中の対局が
+中断され、以後そのマシンには仕事が配られなくなります(SSHは不要)。
 
 - 未完の対局は他のマシンに配り直されるため、テストは壊れません
 - **再開**も同じ場所のボタンから(インスタンス側の操作は不要)
-- ワーカーのプロセスが再起動して新しいセッションになると停止要求は
-  引き継がれないので、**長期間止める場合はワーカーキーの無効化**も
-  あわせて行ってください(キーを再度有効化すれば自動で仕事を取り始めます)
-- インスタンス上で手動で完全停止したい場合:
-  `touch ~/shogibench-worker/Client/openbench.exit` のあと
-  `pkill -f shogibench_setup; pkill -f 'client.py'`。
-  エンジンの殺し残し掃除が必要なときは、**他の用途のエンジンを巻き込まない**よう
+- 停止要求はセッション単位なので、一時停止のつもりで長期間放置しない
+  こと(ワーカープロセスが再起動すると引き継がれません)
+
+**完全停止 (= ワーカーキーの無効化/削除)**: `/workers/` でキーを
+**無効化** または **削除** すると、そのキーで動いている全ワーカーは
+次の通信 (1分以内) で「キー失効」を通知され、**対局を止めて終了コード66で
+自己終了します。setup_worker.sh の再起動ループも66を見て停止する**ので、
+インスタンス側の操作は不要です。キーを再度有効化しても自動では復帰
+しません(再接続してください)。
+
+- インスタンス上で手動で完全停止したい場合は
+  `touch ~/shogibench-worker/Client/openbench.exit` だけで足ります
+  (クライアントが66で終了し、再起動ループも止まります)
+- エンジンの殺し残し掃除が必要なときは、**他の用途のエンジンを巻き込まない**よう
   作業ディレクトリで絞り込むこと:
   ```sh
   for p in $(pgrep -f 'YaneuraOu-'); do
@@ -230,6 +245,12 @@ curl -sSL https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Deploy/work
     esac
   done
   ```
+
+**二重起動について**: 接続 (SSHワンクリック / 手動) を同じマシンに
+何度実行しても、ワーカーは常に1つです。新しい起動が古い起動ループを
+プロセスグループごと止めてから始まり(`~/.shogibench-worker.pgid`)、
+さらにクライアント自体がロックファイル (`Client/.worker.lock`) で
+二重起動を拒否します(後から来た方が終了コード65で即終了)。
 
 ### 3-6. 動作確認
 

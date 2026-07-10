@@ -1304,9 +1304,18 @@ def client_worker_info(request):
     except UnableToAuthenticate:
         return JsonResponse({ 'error' : 'Bad Credentials' })
 
-    # Create a new Machine for this session
+    # Create a new Machine for this session. If the worker sent its stable
+    # per-instance token, reuse the existing row instead: re-registration
+    # (crash loops, client updates) must not multiply the machine list
     info    = json.loads(request.POST['system_info'])
-    machine = OpenBench.utils.get_machine('None', user, info)
+    machine = None
+
+    if (token := info.get('machine_token')):
+        machine = Machine.objects.filter(
+            user=user, info__machine_token=token).order_by('-id').first()
+
+    if machine is None:
+        machine = OpenBench.utils.get_machine('None', user, info)
 
     # Save the machine's latest information and Secret Token for this session
     machine.info   = info
