@@ -1,5 +1,8 @@
 # SPSA チューニング (rshogi ラッパー)
 
+> 実際に回すときの操作手順は **[SPSA_RUNBOOK.md](SPSA_RUNBOOK.md)** (AI向けランブック) を参照。
+> この文書は仕組みと設計の説明。
+
 ShogiBench の SPSA ワークロードは、rshogi の `spsa` チューナー
 ([keinoda/rshogi](https://github.com/keinoda/rshogi) の
 `crates/tools/src/bin/spsa.rs`) のラッパーとして動く。
