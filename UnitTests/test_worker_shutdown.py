@@ -16,6 +16,12 @@ import unittest
 PARENT     = os.path.join(os.path.dirname(__file__), os.path.pardir)
 CLIENT_DIR = os.path.abspath(os.path.join(PARENT, 'Client'))
 
+# terminate_legacy_wrapper がテストランナーの親シェルを「旧ラッパー」と
+# 誤認して殺さないように (親のコマンドラインに setup_worker.sh が含まれる
+# 環境で起こり得る)。旧ラッパー判定そのもののテストはサブプロセス側で
+# 環境変数を制御する
+os.environ.setdefault('SHOGIBENCH_WRAPPER_ACK', '1')
+
 
 def import_worker():
     sys.path.insert(0, CLIENT_DIR)
@@ -64,6 +70,22 @@ class ShutdownOnRevocationTests(unittest.TestCase):
         # サーバ設定変更などの一時的なエラーは従来どおりの再初期化に任せる
         self.assertIsNone(self.worker.shutdown_if_revoked('Server Configuration Changed'))
         self.assertIsNone(self.worker.shutdown_if_revoked('No such Workload'))
+
+    def test_legacy_wrapper_detection(self):
+
+        # 旧ラッパー (契約を知らない再起動ループ) の判定は、ACK 環境変数が
+        # 無く、親のコマンドラインが bootstrap のものであるときだけ
+        w = self.worker
+        self.assertEqual(w.legacy_wrapper_pid(123, 'bash /root/setup_worker.sh', None), 123)
+        self.assertEqual(w.legacy_wrapper_pid(123, 'bash /tmp/shogibench_setup.sh', None), 123)
+
+        # 新ラッパーは SHOGIBENCH_WRAPPER_ACK=1 を export しているので触らない
+        self.assertIsNone(w.legacy_wrapper_pid(123, 'bash /root/setup_worker.sh', '1'))
+
+        # 手動起動や独自 supervisor (bootstrap 以外) も触らない
+        self.assertIsNone(w.legacy_wrapper_pid(123, '-bash', None))
+        self.assertIsNone(w.legacy_wrapper_pid(123, '/usr/bin/python3 my_supervisor.py', None))
+        self.assertIsNone(w.legacy_wrapper_pid(123, '', None))
 
     def test_shutdown_stops_detached_spsa_first(self):
 
@@ -119,6 +141,64 @@ class ShutdownOnRevocationTests(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 66)
         finally:
             self.worker.requests.post = original
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'uses /proc and bash')
+class LegacyWrapperTerminationTests(unittest.TestCase):
+
+    ## 実プロセスでの確認: 旧ラッパー相当の bash ループの直下で
+    ## terminate_legacy_wrapper() を呼ぶと、親ループが TERM で止まる。
+    ## 新ラッパー (ACK あり) は止まらない
+
+    def run_fake_wrapper(self, ack):
+
+        import shutil as _shutil
+        import subprocess
+        import tempfile
+        import time
+
+        tmp = tempfile.mkdtemp(prefix='legacy-wrapper-')
+        try:
+            # 旧ラッパーを模した bash: cmdline に setup_worker.sh を含む
+            script = os.path.join(tmp, 'setup_worker.sh')
+            with open(script, 'w') as fout:
+                fout.write(
+                    '#!/bin/bash\n'
+                    '"%s" "%s/child.py"\n'
+                    'echo WRAPPER_SURVIVED_THE_CHILD\n'
+                    % (sys.executable, tmp))
+
+            with open(os.path.join(tmp, 'child.py'), 'w') as fout:
+                fout.write(
+                    'import sys\n'
+                    'sys.path.insert(0, %r)\n'
+                    'import worker\n'
+                    'worker.terminate_legacy_wrapper()\n'
+                    'import time; time.sleep(1)\n' % (CLIENT_DIR))
+
+            env = { **os.environ }
+            env.pop('SHOGIBENCH_WRAPPER_ACK', None)
+            if ack:
+                env['SHOGIBENCH_WRAPPER_ACK'] = '1'
+
+            result = subprocess.run(
+                ['bash', script], env=env, capture_output=True, text=True,
+                timeout=30, start_new_session=True)
+            return result
+        finally:
+            _shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_legacy_loop_is_terminated(self):
+
+        # ACK 無し = 旧ラッパー: 子の終了処理で親ループごと止まる
+        result = self.run_fake_wrapper(ack=False)
+        self.assertNotIn('WRAPPER_SURVIVED_THE_CHILD', result.stdout)
+
+    def test_acknowledging_wrapper_is_left_alone(self):
+
+        # ACK あり = 新ラッパー: 触らない (自分で 65/66 を処理する)
+        result = self.run_fake_wrapper(ack=True)
+        self.assertIn('WRAPPER_SURVIVED_THE_CHILD', result.stdout)
 
 
 class VersionGateTests(unittest.TestCase):

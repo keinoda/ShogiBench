@@ -22,6 +22,8 @@
 # Exit-code contract with client.py (worker.py):
 #   65  another worker already owns this machine -> do not restart
 #   66  worker key was disabled/deleted, or openbench.exit -> do not restart
+# SHOGIBENCH_WRAPPER_ACK=1 tells the worker its wrapper honors this contract;
+# without it the worker assumes a legacy loop and terminates it on 65/66
 
 PIDFILE="$HOME/.shogibench-worker.pgid"
 BOOTLOCK="$HOME/.shogibench-boot.lock"
@@ -405,9 +407,16 @@ fi
 
 cd "$SHOGIBENCH_DIR/Client"
 
+# 前回の openbench.exit (手動停止マーカー) はここで解除する。人が明示的に
+# 再接続した = 動かしたい、という意思表示。クライアント側では消さない
+rm -f openbench.exit
+
 # Newer Debian/Ubuntu images mark the system Python as externally managed
 pip3 install --break-system-packages -r requirements.txt 2>/dev/null \
     || pip3 install -r requirements.txt
+
+# このラッパーは 65/66 の終了コード契約を理解する (旧ラッパー検出の目印)
+export SHOGIBENCH_WRAPPER_ACK=1
 
 # Keep the worker alive across transient failures. If the client dies
 # almost immediately it is a misconfiguration (a missing tool it checks

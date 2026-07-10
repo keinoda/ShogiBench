@@ -31,6 +31,7 @@ import queue
 import re
 import requests
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -61,7 +62,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 56 # Client version to send to the Server
+CLIENT_VERSION   = 57 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -99,6 +100,7 @@ def acquire_single_instance_lock():
         lock.close()
         print ('[Error] Another worker is already running from this directory')
         print ('[Error] Exiting to avoid duplicate workers (exit code %d)' % (EXIT_DUPLICATE))
+        terminate_legacy_wrapper()
         sys.exit(EXIT_DUPLICATE)
     except OSError as error:
         # flock が使えない環境 (NFS 等)。誤検知の exit 65 でラッパーごと
@@ -121,6 +123,46 @@ def stop_detached_spsa():
     except Exception as error:
         print ('[Note] Could not stop detached SPSA runs: %s' % (error))
 
+def legacy_wrapper_pid(ppid, parent_cmdline, wrapper_ack):
+
+    ## 「終了コード契約 (65/66) を知らない旧ラッパーの直下で走っているか」の
+    ## 判定。新しい setup_worker.sh は SHOGIBENCH_WRAPPER_ACK=1 を export する
+    ## ので対象外。親のコマンドラインが bootstrap のものでなければ (手動起動や
+    ## 独自の supervisor)、勝手に殺さない
+
+    if wrapper_ack:
+        return None
+
+    markers = ('setup_worker.sh', 'shogibench_setup.sh')
+    if any(marker in (parent_cmdline or '') for marker in markers):
+        return ppid
+
+    return None
+
+def terminate_legacy_wrapper():
+
+    ## 恒久停止 (exit 65/66) するとき、契約を知らない旧ラッパーの下に
+    ## いたらラッパーごと終わらせる。放置すると旧ループは終了コードを捨てて
+    ## 15秒毎に再起動し続け、失効キーでサーバを叩き続けてしまう
+
+    if IS_WINDOWS:
+        return
+
+    try:
+        ppid = os.getppid()
+        with open('/proc/%d/cmdline' % (ppid), 'rb') as fin:
+            cmdline = fin.read().decode('utf-8', 'replace').replace('\0', ' ')
+
+        target = legacy_wrapper_pid(
+            ppid, cmdline, os.environ.get('SHOGIBENCH_WRAPPER_ACK'))
+
+        if target is not None:
+            print ('[Note] Legacy restart loop detected (pid %d); stopping it as well' % (target))
+            os.kill(target, signal.SIGTERM)
+
+    except Exception as error:
+        print ('[Note] Could not check for a legacy wrapper: %s' % (error))
+
 def shutdown_if_revoked(response):
 
     ## サーバが「ワーカーキーの無効化/削除 (恒久的)」を通知してきたときは、
@@ -139,6 +181,7 @@ def shutdown_if_revoked(response):
         print ('[Error] Server rejected our credentials: %s' % (message))
         print ('[Error] Worker key was likely disabled or deleted. Shutting down (exit code %d)' % (EXIT_SHUTDOWN))
         stop_detached_spsa()
+        terminate_legacy_wrapper()
         sys.exit(EXIT_SHUTDOWN)
 
 def load_machine_token():
@@ -1892,9 +1935,9 @@ def run_openbench_worker(client_args):
     if IS_LINUX:
         set_runner_permissions()
 
-    # Cleanup in case openbench.exit still exists
-    if os.path.isfile('openbench.exit'):
-        os.remove('openbench.exit')
+    # openbench.exit はここでは消さない: 消してしまうと、契約を知らない
+    # supervisor (独自 systemd 等) が再起動したときに停止指示が静かに
+    # 無効化される。解除は setup_worker.sh (再接続) が行う
 
     while True:
 
@@ -1903,6 +1946,7 @@ def run_openbench_worker(client_args):
         if os.path.isfile('openbench.exit'):
             print('Exited via openbench.exit')
             stop_detached_spsa()
+            terminate_legacy_wrapper()
             sys.exit(EXIT_SHUTDOWN)
 
         try:
