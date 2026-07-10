@@ -975,6 +975,7 @@ class WorkerConnectTests(TestCase):
         command = connection.exec_command.call_args.args[0]
         self.assertIn(self.key.token, command)
         self.assertIn('OPENBENCH_USERNAME=alice', command)
+        self.assertIn('SHOGIBENCH_PROTECTED_PIDS="$$ $PPID"', command)
         self.assertIn('shogibench_setup.sh', command)
 
     @patch('OpenBench.views.paramiko.SSHClient')
@@ -1012,6 +1013,7 @@ class WorkerConnectTests(TestCase):
 
         launch_command = connection.exec_command.call_args_list[1].args[0]
         self.assertIn(self.key.token, launch_command)
+        self.assertIn('SHOGIBENCH_PROTECTED_PIDS="$$ $PPID"', launch_command)
         self.assertIn('nohup /tmp/shogibench_setup.sh', launch_command)
 
     @patch('OpenBench.views.paramiko.SSHClient')

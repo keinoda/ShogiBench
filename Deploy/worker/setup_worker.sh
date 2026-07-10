@@ -42,12 +42,31 @@ self_ancestors() {
     done
 }
 
+protected_pids() {
+
+    # サーバーの SSH 起動用シェルなど、親子関係から外れて見えることがある
+    # プロセスも明示的に保護する
+    printf '%s\n' ${SHOGIBENCH_PROTECTED_PIDS:-}
+    self_ancestors
+}
+
 is_protected_pid() {
     local pid="$1"
     [ "$pid" = "$$" ] && return 0
     case " $PROTECTED_PIDS " in
         *" $pid "*) return 0 ;;
     esac
+    return 1
+}
+
+is_protected_group() {
+    local pgid="$1" pid ppid
+    [ "$pgid" = "$(self_pgid)" ] && return 0
+    for pid in $PROTECTED_PIDS; do
+        [ -n "$pid" ] || continue
+        ppid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [ "$ppid" = "$pgid" ] && return 0
+    done
     return 1
 }
 
@@ -74,8 +93,8 @@ kill_group_or_pid() {
         ''|*[!0-9]*) pgid="" ;;
     esac
 
-    if [ -n "$pgid" ] && [ "$pgid" != "1" ] && [ "$pgid" != "$(self_pgid)" ] \
-            && ! is_protected_pid "$pgid"; then
+    if [ -n "$pgid" ] && [ "$pgid" != "1" ] \
+            && ! is_protected_group "$pgid" && ! is_protected_pid "$pgid"; then
         kill_group "$pgid"
     else
         kill -TERM "$pid" 2>/dev/null || true
@@ -85,7 +104,7 @@ kill_group_or_pid() {
 stop_previous_workers() {
 
     # 自分と自分の祖先は絶対に殺さない
-    PROTECTED_PIDS="$(self_ancestors | tr '\n' ' ')"
+    PROTECTED_PIDS="$(protected_pids | tr '\n' ' ')"
 
     # 1) Modern bootstraps record their process group here; killing the
     #    group stops the loop, its installers, the client, and any engines
@@ -96,7 +115,7 @@ stop_previous_workers() {
             ''|*[!0-9]*) : ;;
             1) : ;;
             *)
-                if [ "$oldpgid" != "$(self_pgid)" ] && ! is_protected_pid "$oldpgid"; then
+                if ! is_protected_group "$oldpgid" && ! is_protected_pid "$oldpgid"; then
                     kill_group "$oldpgid"
                 fi ;;
         esac
@@ -230,6 +249,8 @@ fi
 # Stop any worker started by an earlier run (or an earlier failed attempt),
 # so re-running this script never leaves two loops behind
 stop_previous_workers
+
+echo "[setup_worker] starting bootstrap pid=$$ pgid=$(self_pgid)"
 
 # Record our process group for the next takeover. Only useful when we truly
 # lead our own group; otherwise the name-based sweep still covers us

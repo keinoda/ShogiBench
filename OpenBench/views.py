@@ -782,7 +782,7 @@ def launch_worker_over_ssh(request, pkey, worker_key, target, threads):
         # long-lived worker process can hold the channel open forever.
         command = (
             'chmod +x /tmp/shogibench_setup.sh && '
-            '( export %s ; nohup /tmp/shogibench_setup.sh '
+            '( export SHOGIBENCH_PROTECTED_PIDS="$$ $PPID" %s ; nohup /tmp/shogibench_setup.sh '
             '> "$HOME/shogibench-worker.log" 2>&1 < /dev/null & ) && '
             'echo LAUNCHED'
         ) % (env_line)
