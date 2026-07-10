@@ -927,3 +927,348 @@ class WorkerConnectTests(TestCase):
             }, follow=True)
 
         self.assertContains(response, 'SSH connection failed')
+
+class SpsaRshogiLifecycleTests(TestCase):
+
+    ## SPSA (rshogi ラッパー) の一連の流れ:
+    ## GUI で作成 -> 承認 -> ワーカー割り当て -> 進捗報告 -> 完了 -> 表示
+
+    PARAMS_TEXT = (
+        'SPSA_LMR_BASE_QUIET, int, 181, 90, 362, 14, 0.0020\n'
+        'SPSA_NMP_MARGIN_OFFSET, int, -390, -780, -195, 30, 0.0020 // sign_flip\n'
+        'DeadParam, int, 10, 0, 20, 1, 0.0020 [[NOT USED]]\n')
+
+    def setUp(self):
+        self.alice = User.objects.create_user('alice', 'a@example.com', 'pw-alice')
+        Profile.objects.create(user=self.alice, enabled=True, approver=True)
+        self.client.login(username='alice', password='pw-alice')
+
+    def tune_form(self, **overrides):
+        form = {
+            'dev_engine'        : 'YaneuraOu-nagisa',
+            'dev_repo'          : 'https://github.com/keinoda/YaneuraOu',
+            'dev_branch'        : 'master',
+            'dev_bench'         : '',
+            'dev_network'       : '',
+            'dev_build'         : 'default',
+            'dev_options'       : 'Threads=1 Hash=16 USI_OwnBook=false',
+            'dev_time_control'  : '2+0.02',
+            'book_name'         : 'taya36_shogi_sfen.epd',
+            'priority'          : '0',
+            'throughput'        : '1000',
+            'scale_method'      : 'DEV',
+            'scale_nps'         : '1000000',
+            'spsa_inputs'       : self.PARAMS_TEXT,
+            'spsa_alpha'        : '0.602',
+            'spsa_gamma'        : '0.101',
+            'spsa_a_ratio'      : '0.1',
+            'spsa_total_pairs'  : '51200',
+            'spsa_batch_pairs'  : '96',
+            'spsa_seed'         : '1',
+            'spsa_active_regex' : '^SPSA_',
+            'spsa_mapping'      : 'YO',
+        }
+        form.update(overrides)
+        return form
+
+    def github_info(self):
+        return ('https://github.com/keinoda/YaneuraOu/archive/' + 'b' * 40 + '.zip',
+                'master', 'a' * 40, 0)
+
+    def create_tune(self, **overrides):
+        with patch('OpenBench.workloads.verify_workload.collect_github_info',
+                   return_value=(self.github_info(), True)):
+            response = self.client.post('/tune/new/', self.tune_form(**overrides))
+        return response
+
+    def make_machine(self, threads=192):
+        from OpenBench.config import OPENBENCH_CONFIG, OPENBENCH_CONFIG_CHECKSUM
+        from OpenBench.models import Machine
+        return Machine.objects.create(user=self.alice, secret='s3cret', info={
+            'concurrency'    : threads,
+            'physical_cores' : threads,
+            'sockets'        : 1,
+            'supported'      : ['YaneuraOu-nagisa', 'YaneuraOu', 'YaneuraOu-souyuukou'],
+            'syzygy_max'     : 0,
+            'os_name'        : 'Linux',
+            'mac_address'    : '00:00:00:00:00:00',
+            'client_ver'     : OPENBENCH_CONFIG['client_version'],
+            'OPENBENCH_CONFIG_CHECKSUM' : OPENBENCH_CONFIG_CHECKSUM,
+        })
+
+    class FakeRequest:
+        def __init__(self):
+            from django.http import QueryDict
+            self.POST = QueryDict('')
+
+    def assign(self, machine):
+        from OpenBench.workloads.get_workload import get_workload
+        return get_workload(self.FakeRequest(), machine)
+
+    def test_create_tune_builds_rshogi_schema(self):
+
+        # 成功すると index へ、失敗するとフォームへ戻される
+        response = self.create_tune()
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/index/', response.url)
+
+        test = Test.objects.get(test_mode='SPSA')
+        spsa = test.spsa
+
+        self.assertEqual(spsa['wrapper'], 'RSHOGI')
+        self.assertEqual(spsa['total_pairs'], 51200)
+        self.assertEqual(spsa['batch_pairs'], 96)
+        self.assertEqual(spsa['seed'], 1)
+        self.assertEqual(spsa['mapping'], 'YO')
+        self.assertEqual(spsa['active_regex'], '^SPSA_')
+        self.assertEqual(spsa['early_stop']['patience'], 0)
+
+        # 原文が (改行整理だけされて) そのまま保持される
+        self.assertIn('SPSA_NMP_MARGIN_OFFSET, int, -390, -780, -195, 30, 0.0020 // sign_flip',
+                      spsa['params_text'])
+
+        # 表示用ビュー
+        self.assertEqual(spsa['parameters']['SPSA_LMR_BASE_QUIET']['start'], 181.0)
+        self.assertTrue(spsa['parameters']['DeadParam']['not_used'])
+
+        # rshogi が使わない設定は固定される
+        self.assertEqual(test.upload_pgns, 'FALSE')
+        self.assertEqual(test.win_adj, 'None')
+        self.assertEqual(test.workload_size, 96)
+
+    def test_create_tune_rejects_bad_inputs(self):
+
+        # 7カラムでない
+        response = self.create_tune(spsa_inputs='Foo, int, 1, 0, 10, 1\n')
+        self.assertIn('/tune/new/', response.url)
+
+        # SPSA で使えない持ち時間 (秒読みサイクル)
+        response = self.create_tune(dev_time_control='40/60+0.6')
+        self.assertIn('/tune/new/', response.url)
+
+        # 早期停止の閾値不足
+        response = self.create_tune(spsa_early_patience='5')
+        self.assertIn('/tune/new/', response.url)
+
+        # バッチペア数 > 総ペア数
+        response = self.create_tune(spsa_total_pairs='10', spsa_batch_pairs='96')
+        self.assertIn('/tune/new/', response.url)
+
+        self.assertFalse(Test.objects.filter(test_mode='SPSA').exists())
+
+    def test_assignment_and_progress_lifecycle(self):
+
+        self.create_tune()
+        test = Test.objects.get(test_mode='SPSA')
+        test.approved = True
+        test.save()
+
+        machine  = self.make_machine(threads=192)
+        response = self.assign(machine)
+        workload = response['workload']
+
+        # rshogi 用のペイロード
+        self.assertEqual(workload['test']['type'], 'SPSA')
+        self.assertEqual(workload['spsa']['wrapper'], 'RSHOGI')
+        self.assertEqual(workload['spsa']['params_text'], test.spsa['params_text'])
+        self.assertEqual(workload['spsa']['carry']['pairs'], 0)
+
+        # 並列度は min(スレッド数/エンジンスレッド, 2×バッチペア数)
+        self.assertEqual(workload['spsa']['concurrency'], 192)
+
+        # SPSA は開始局面インデックスを消費しない
+        test.refresh_from_db()
+        self.assertEqual(test.book_index, 1)
+
+        # --- ワーカーからの進捗報告 ---
+        state = ('SPSA_LMR_BASE_QUIET,int,190.500000,90,362,14,0.002\n'
+                 'SPSA_NMP_MARGIN_OFFSET,int,-400.000000,-780,-195,30,0.002\n'
+                 'DeadParam,int,10.000000,0,20,1,0.002\n')
+
+        response = self.client.post('/clientSubmitSpsa/', {
+            'machine_id'          : machine.id,
+            'secret'              : 's3cret',
+            'test_id'             : test.id,
+            'result_id'           : workload['result']['id'],
+            'completed_pairs'     : '192',
+            'completed_batches'   : '2',
+            'total_games'         : '384',
+            'wins'                : '150',
+            'losses'              : '140',
+            'draws'               : '94',
+            'last_raw_result'     : '+2.000',
+            'last_avg_abs_update' : '0.0125',
+            'state_params'        : state,
+            'finished'            : '0',
+        }).json()
+
+        self.assertEqual(response, {})
+
+        test.refresh_from_db()
+        self.assertEqual(test.games, 384)
+        self.assertEqual(test.wins, 150)
+        self.assertEqual(test.spsa['progress']['completed_pairs'], 192)
+        self.assertEqual(test.spsa['progress']['machine_id'], machine.id)
+        self.assertEqual(test.spsa['parameters']['SPSA_LMR_BASE_QUIET']['value'], 190.5)
+        self.assertEqual(test.spsa['state_params'], state)
+
+        # Result / Profile は寄与分だけ加算される
+        from OpenBench.models import Result
+        result = Result.objects.get(id=workload['result']['id'])
+        self.assertEqual(result.games, 384)
+        self.assertEqual(result.wins, 150)
+        self.assertEqual(result.losses, 140)
+        self.assertEqual(result.draws, 94)
+
+        # --- 完了報告 ---
+        final = state.replace('190.500000', '195')
+        response = self.client.post('/clientSubmitSpsa/', {
+            'machine_id'      : machine.id,
+            'secret'          : 's3cret',
+            'test_id'         : test.id,
+            'result_id'       : workload['result']['id'],
+            'completed_pairs' : '51200',
+            'completed_batches' : '534',
+            'total_games'     : '102400',
+            'wins'            : '40000',
+            'losses'          : '39000',
+            'draws'           : '23400',
+            'state_params'    : final,
+            'finished'        : '1',
+            'final_params'    : final,
+        }).json()
+
+        self.assertEqual(response, { 'stop' : True })
+
+        test.refresh_from_db()
+        self.assertTrue(test.finished)
+        self.assertTrue(test.passed)
+        self.assertEqual(test.spsa['final_params'], final)
+        self.assertEqual(test.games, 102400)
+
+    def test_spsa_workload_is_exclusive_to_one_machine(self):
+
+        self.create_tune()
+        test = Test.objects.get(test_mode='SPSA')
+        test.approved = True
+        test.save()
+
+        first = self.make_machine()
+        self.assertIn('workload', self.assign(first))
+
+        # 稼働中 (updated が新しい) の間、他のマシンには配られない
+        second = self.make_machine()
+        self.assertEqual(self.assign(second), {})
+
+    def test_spsa_requires_linux_worker(self):
+
+        self.create_tune()
+        test = Test.objects.get(test_mode='SPSA')
+        test.approved = True
+        test.save()
+
+        machine = self.make_machine()
+        machine.info['os_name'] = 'Windows'
+        machine.save()
+        self.assertEqual(self.assign(machine), {})
+
+    def test_legacy_spsa_records_are_not_assigned(self):
+
+        from OpenBench.models import Engine
+        engine = Engine.objects.create(name='master', source='s', sha='a' * 40, bench=1)
+        Test.objects.create(
+            author='alice', dev=engine, base=engine,
+            dev_engine='YaneuraOu-nagisa', base_engine='YaneuraOu-nagisa',
+            dev_options='Threads=1 Hash=16', base_options='Threads=1 Hash=16',
+            dev_time_control='2.0+0.02', base_time_control='2.0+0.02',
+            book_name='taya36_shogi_sfen.epd',
+            test_mode='SPSA', approved=True,
+            spsa={ 'parameters' : {}, 'iterations' : 100, 'pairs_per' : 8,
+                   'Alpha' : 0.602, 'Gamma' : 0.101, 'A' : 10,
+                   'reporting_type' : 'BATCHED', 'distribution_type' : 'SINGLE' })
+
+        machine = self.make_machine()
+        self.assertEqual(self.assign(machine), {})
+
+    def test_game_results_endpoint_rejects_spsa(self):
+
+        self.create_tune()
+        test = Test.objects.get(test_mode='SPSA')
+        test.approved = True
+        test.save()
+
+        machine  = self.make_machine()
+        workload = self.assign(machine)['workload']
+
+        response = self.client.post('/clientSubmitResults/', {
+            'machine_id' : machine.id,  'secret'     : 's3cret',
+            'test_id'    : test.id,     'result_id'  : workload['result']['id'],
+            'crashes'    : '0', 'timelosses' : '0', 'illegals' : '0',
+            'trinomial'  : '1 0 1', 'pentanomial' : '0 0 1 0 0',
+        }).json()
+
+        self.assertEqual(response, { 'stop' : True })
+        test.refresh_from_db()
+        self.assertEqual(test.games, 0)
+
+    def test_stopped_tune_tells_worker_to_stop(self):
+
+        self.create_tune()
+        test = Test.objects.get(test_mode='SPSA')
+        test.approved = True
+        test.save()
+
+        machine  = self.make_machine()
+        workload = self.assign(machine)['workload']
+
+        # GUI から停止
+        self.client.post('/tune/%d/STOP/' % (test.id))
+
+        response = self.client.post('/clientSubmitSpsa/', {
+            'machine_id' : machine.id, 'secret' : 's3cret',
+            'test_id'    : test.id, 'result_id' : workload['result']['id'],
+            'completed_pairs' : '10', 'total_games' : '20',
+        }).json()
+
+        self.assertEqual(response, { 'stop' : True })
+
+    def test_workload_page_renders_rshogi_tune(self):
+
+        self.create_tune()
+        test = Test.objects.get(test_mode='SPSA')
+
+        response = self.client.get('/tune/%d/' % (test.id))
+        self.assertContains(response, 'rshogi spsa')
+        self.assertContains(response, 'SPSA_LMR_BASE_QUIET')
+        self.assertContains(response, '51200')
+
+        # 進捗報告後も描画できる (現在値・進捗ブロック)
+        test.approved = True
+        test.save()
+        machine  = self.make_machine()
+        workload = self.assign(machine)['workload']
+
+        self.client.post('/clientSubmitSpsa/', {
+            'machine_id' : machine.id, 'secret' : 's3cret',
+            'test_id'    : test.id, 'result_id' : workload['result']['id'],
+            'completed_pairs' : '192', 'completed_batches' : '2', 'total_games' : '384',
+            'wins' : '150', 'losses' : '140', 'draws' : '94',
+            'last_raw_result' : '2.0', 'last_avg_abs_update' : '0.01',
+            'state_params' : 'SPSA_LMR_BASE_QUIET,int,190.500000,90,362,14,0.002\n',
+        })
+
+        response = self.client.get('/tune/%d/' % (test.id))
+        self.assertContains(response, '190.5000')
+        self.assertContains(response, '消化 384 局')
+
+        # 一覧ページも壊れない
+        response = self.client.get('/index/')
+        self.assertContains(response, 'Tuning 2 Parameters (rshogi)')
+
+    def test_create_tune_page_renders(self):
+
+        response = self.client.get('/tune/new/')
+        self.assertContains(response, 'spsa_total_pairs')
+        self.assertContains(response, 'spsa_batch_pairs')
+        self.assertContains(response, 'spsa_mapping')
+        self.assertNotContains(response, 'spsa_reporting_type')

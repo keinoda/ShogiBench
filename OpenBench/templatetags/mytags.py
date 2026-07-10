@@ -63,7 +63,19 @@ def shortStatBlock(test):
     tri_line   = 'Games: %d W: %d L: %d D: %d' % test.as_nwld()
     penta_line = 'Ptnml(0-2): %d, %d, %d, %d, %d' % test.as_penta()
 
-    if test.test_mode == 'SPSA':
+    if test.test_mode == 'SPSA' and spsa_is_rshogi(test):
+
+        progress = test.spsa.get('progress', {}) or {}
+        pairs    = progress.get('completed_pairs', 0)
+        total    = max(1, test.spsa.get('total_pairs', 1))
+        active   = sum(1 for p in test.spsa['parameters'].values() if not p.get('not_used'))
+
+        statlines = [
+            'Tuning %d Parameters (rshogi)' % (active),
+            '%d/%d Pairs (%.1f%%)' % (pairs, total, 100.0 * pairs / total),
+            '%d Games Played' % (test.games)]
+
+    elif test.test_mode == 'SPSA':
         statlines = [
             'Tuning %d Parameters' % (len(test.spsa['parameters'].keys())),
             '%d/%d Iterations' % (test.games / (2 * test.spsa['pairs_per']), test.spsa['iterations']),
@@ -264,7 +276,45 @@ register.filter('machine_name', machine_name)
 
 ####
 
+def spsa_is_rshogi(workload):
+    return isinstance(workload.spsa, dict) and workload.spsa.get('wrapper') == 'RSHOGI'
+
+def spsa_sorted_names(workload):
+    return sorted(
+        workload.spsa['parameters'].keys(),
+        key=lambda x: workload.spsa['parameters'][x].get('index', -1)
+    )
+
+def spsa_progress(workload):
+
+    ## workload.html の進捗ブロック用。rshogi ラッパーのみ意味を持つ
+
+    spsa     = workload.spsa
+    progress = spsa.get('progress', {}) or {}
+
+    pairs = progress.get('completed_pairs', 0)
+    total = max(1, spsa.get('total_pairs', 1))
+
+    return {
+        'started'             : bool(progress),
+        'completed_pairs'     : pairs,
+        'completed_batches'   : progress.get('completed_batches', 0),
+        'total_pairs'         : spsa.get('total_pairs', 0),
+        'total_batches'       : (spsa.get('total_pairs', 0) + spsa.get('batch_pairs', 1) - 1)
+                                    // max(1, spsa.get('batch_pairs', 1)),
+        'percent'             : '%.1f' % (100.0 * pairs / total),
+        'total_games'         : progress.get('total_games', 0),
+        'last_raw_result'     : '%+.3f' % (progress.get('last_raw_result', 0.0)),
+        'last_avg_abs_update' : '%.6f' % (progress.get('last_avg_abs_update', 0.0)),
+        'updated_at'          : progress.get('updated_at', ''),
+        'machine_id'          : progress.get('machine_id', 0),
+        'has_final'           : bool(spsa.get('final_params')),
+    }
+
 def spsa_param_digest(workload):
+
+    if spsa_is_rshogi(workload):
+        return rshogi_param_digest(workload)
 
     digest = []
 
@@ -273,13 +323,7 @@ def spsa_param_digest(workload):
     c_compression = iteration ** workload.spsa['Gamma']
     r_compression = (workload.spsa['A'] + iteration) ** workload.spsa['Alpha']
 
-    # Maintain the original order, if there was one
-    keys = sorted(
-        workload.spsa['parameters'].keys(),
-        key=lambda x: workload.spsa['parameters'][x].get('index', -1)
-    )
-
-    for name in keys:
+    for name in spsa_sorted_names(workload):
 
         param = workload.spsa['parameters'][name]
 
@@ -303,19 +347,57 @@ def spsa_param_digest(workload):
 
     return digest
 
+def rshogi_param_digest(workload):
+
+    ## rshogi ラッパー: スケジュール (c_k, R_k) は rshogi 側の管轄なので、
+    ## ここでは 初期値 → 現在値 の推移とレンジ張り付きの注意を出す
+
+    digest = []
+    for name in spsa_sorted_names(workload):
+
+        param = workload.spsa['parameters'][name]
+        fstr  = '%.4f' if param['float'] else '%g'
+
+        # 現在値が min/max に C_end 以内まで寄っていたら要注意 (レンジ拡大の検討対象)
+        near = ''
+        if not param.get('not_used'):
+            span = param['max'] - param['min']
+            edge = max(param['c_end'], span * 0.01)
+            if param['value'] <= param['min'] + edge:
+                near = '⚠ min付近'
+            elif param['value'] >= param['max'] - edge:
+                near = '⚠ max付近'
+
+        if param.get('not_used'):
+            near = '[[NOT USED]]'
+
+        digest.append([
+            name,
+            '%.4f' % (param['value']),
+            fstr   % (param['start']),
+            '%+.4f' % (param['value'] - param['start']),
+            fstr   % (param['min'  ]),
+            fstr   % (param['max'  ]),
+            fstr   % (param['c_end']),
+            '%g'   % (param['r_end']),
+            near,
+        ])
+
+    return digest
+
 def spsa_param_digest_headers(workload):
+    if spsa_is_rshogi(workload):
+        return ['Name', 'Curr', 'Start', 'Δ', 'Min', 'Max', 'C_end', 'R_end', '']
     return ['Name', 'Curr', 'Start', 'Min', 'Max', 'C', 'C_end', 'R', 'R_end']
 
 def spsa_original_input(workload):
 
-    # Maintain the original order, if there was one
-    keys = sorted(
-        workload.spsa['parameters'].keys(),
-        key=lambda x: workload.spsa['parameters'][x].get('index', -1)
-    )
+    # rshogi ラッパーは貼り付けられた .params 原文をそのまま保持している
+    if spsa_is_rshogi(workload):
+        return workload.spsa.get('params_text', '')
 
     lines = []
-    for name in keys:
+    for name in spsa_sorted_names(workload):
 
         param = workload.spsa['parameters'][name]
         dtype = 'float' if param['float'] else 'int'
@@ -335,14 +417,14 @@ def spsa_original_input(workload):
 
 def spsa_optimal_values(workload):
 
-    # Maintain the original order, if there was one
-    keys = sorted(
-        workload.spsa['parameters'].keys(),
-        key=lambda x: workload.spsa['parameters'][x].get('index', -1)
-    )
+    # rshogi ラッパー: 完了後は final.params、実行中は state.params の内容を返す。
+    # どちらも 7 カラム .params 形式なので、そのまま tune.py apply に渡せる
+    if spsa_is_rshogi(workload):
+        spsa = workload.spsa
+        return spsa.get('final_params') or spsa.get('state_params') or spsa.get('params_text', '')
 
     lines = []
-    for name in keys:
+    for name in spsa_sorted_names(workload):
         param = workload.spsa['parameters'][name]
         value = param['value'] if param['float'] else round(param['value'])
         lines.append(', '.join([name, str(value)]))
@@ -412,6 +494,8 @@ def test_is_fischer(test):
     return 'FRC' in test.book_name.upper() or '960' in test.book_name.upper()
 
 
+register.filter('spsa_is_rshogi', spsa_is_rshogi)
+register.filter('spsa_progress', spsa_progress)
 register.filter('spsa_param_digest', spsa_param_digest)
 register.filter('spsa_param_digest_headers', spsa_param_digest_headers)
 register.filter('spsa_original_input', spsa_original_input)

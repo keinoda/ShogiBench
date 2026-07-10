@@ -56,7 +56,23 @@
             <tr><td class="td-label">引き分け判定</td><td>{{workload.draw_adj}}</td></tr>
             <tr><td class="td-label">スケーリング</td><td>{{workload.scale_method}} {{workload.scale_nps}} NPS</td></tr>
 
-            {% if type == "TUNE" %}
+            {% if type == "TUNE" and workload|spsa_is_rshogi %}
+                <tr><td class="td-label">SPSA 実装</td><td>rshogi spsa (ラッパー)</td></tr>
+                <tr><td class="td-label">総ペア数</td><td>{{workload.spsa.total_pairs}} ({% widthratio workload.spsa.total_pairs 1 2 %} 局)</td></tr>
+                <tr><td class="td-label">バッチペア数</td><td>{{workload.spsa.batch_pairs}}</td></tr>
+                <tr><td class="td-label">Alpha / Gamma / A-Ratio</td><td>{{workload.spsa.alpha}} / {{workload.spsa.gamma}} / {{workload.spsa.a_ratio}}</td></tr>
+                <tr><td class="td-label">乱数 Seed</td><td>{{workload.spsa.seed|default_if_none:"ランダム"}}</td></tr>
+                {% if workload.spsa.active_regex %}
+                    <tr><td class="td-label">対象絞り込み</td><td class="engine-options">{{workload.spsa.active_regex}}</td></tr>
+                {% endif %}
+                <tr><td class="td-label">名前マッピング</td><td>{% if workload.spsa.mapping == "YO" %}YaneuraOu (yo_rshogi_mapping.toml){% else %}なし{% endif %}</td></tr>
+                {% if workload.spsa.early_stop.patience %}
+                    <tr><td class="td-label">早期停止</td><td>patience={{workload.spsa.early_stop.patience}},
+                        avg|update|≦{{workload.spsa.early_stop.avg_abs_update}},
+                        |raw|/batch≦{{workload.spsa.early_stop.result_variance}}</td></tr>
+                {% endif %}
+            {% elif type == "TUNE" %}
+                <tr><td class="td-label">SPSA 実装</td><td>旧・分散SPSA (表示のみ)</td></tr>
                 <tr><td class="td-label">Alpha</td><td>{{workload.spsa.Alpha}}</td></tr>
                 <tr><td class="td-label">Gamma</td><td>{{workload.spsa.Gamma}}</td></tr>
                 <tr><td class="td-label">A-Ratio</td><td>{{workload.spsa.A_ratio}}</td></tr>
@@ -144,15 +160,28 @@
         {% if type == "TUNE" %}
             <div class="anchor-container">
                 <pre id="spsa-input" style="display: none">{{workload|spsa_original_input}}</pre>
-                <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('spsa-input', false)">Copy SPSA Inputs</a>
+                <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('spsa-input', false)"
+                   title="作成時に貼り付けた .params 原文">SPSA入力をコピー</a>
             </div>
         {% endif %}
 
-        <!-- Copies SPSA Optimal Values from a hidden element -->
+        <!-- Copies SPSA current/final values (7カラム .params 形式) -->
         {% if type == "TUNE" %}
             <div class="anchor-container">
                 <pre id="spsa-output" style="display: none">{{workload|spsa_optimal_values}}</pre>
-                <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('spsa-output', false)">Copy SPSA Outputs</a>
+                {% if workload|spsa_is_rshogi %}
+                    {% with prog=workload|spsa_progress %}
+                        {% if prog.has_final %}
+                            <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('spsa-output', false)"
+                               title="正常完了時の確定スナップショット。そのまま tune.py apply に渡せます">final.params をコピー</a>
+                        {% else %}
+                            <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('spsa-output', false)"
+                               title="実行中の state.params (7カラム .params 形式)">現在値 (.params) をコピー</a>
+                        {% endif %}
+                    {% endwith %}
+                {% else %}
+                    <a class="mt-1 anchorbutton btn-blue" onclick="copy_text('spsa-output', false)">Copy SPSA Outputs</a>
+                {% endif %}
             </div>
         {% endif %}
 
@@ -198,6 +227,22 @@
             </div>
         </form>
     </div>
+
+    <!-- SPSA (rshogi) progress, for Tunes -->
+    {% if type == "TUNE" and workload|spsa_is_rshogi %}
+        {% with prog=workload|spsa_progress %}
+            <div id="spsa-progress" class="w-100 mt-3" style="float:left;">
+                {% if prog.started %}
+                    <pre class="long-statblock" style="margin: 0;">batch {{prog.completed_batches}}/{{prog.total_batches}} | ペア {{prog.completed_pairs}}/{{prog.total_pairs}} ({{prog.percent}}%) | 消化 {{prog.total_games}} 局
+直近バッチ: raw_result={{prog.last_raw_result}} (0近傍が正常) avg|update|={{prog.last_avg_abs_update}}
+実行マシン: <a href="/machines/{{prog.machine_id}}">#{{prog.machine_id}}</a> | 最終報告: {{prog.updated_at}}{% if prog.has_final %}
+✅ 完走済み。final.params を「final.params をコピー」から取得できます (tune.py apply の入力){% endif %}</pre>
+                {% else %}
+                    <pre class="long-statblock" style="margin: 0;">ワーカーの割り当てを待っています。SPSA は 1 台のワーカーが専有して rshogi の spsa を実行します。</pre>
+                {% endif %}
+            </div>
+        {% endwith %}
+    {% endif %}
 
     <!-- SPSA Paramater Summary, for Tunes -->
     {% if type == "TUNE" %}

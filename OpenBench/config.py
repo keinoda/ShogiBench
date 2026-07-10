@@ -116,6 +116,8 @@ def verify_general_config(conf):
     assert type(conf.get('fastchess_repo_ref') == str)
     assert type(conf.get('shogitest_repo_url') == str)
     assert type(conf.get('shogitest_repo_ref') == str)
+    assert type(conf.get('rshogi_repo_url'   ) == str)
+    assert type(conf.get('rshogi_repo_ref'   ) == str)
 
     assert type(conf.get('use_cross_approval'         ) == bool)
     assert type(conf.get('require_login_to_view'      ) == bool)
@@ -207,23 +209,23 @@ def verify_engine_tune_preset(tune_preset):
         'dev_options',
         'dev_time_control',
 
-        'spsa_reporting_type',
-        'spsa_distribution_type',
+        # SPSA (rshogi ラッパー) の設定
         'spsa_alpha',
         'spsa_gamma',
-        'spsa_A_ratio',
-        'spsa_iterations',
-        'spsa_pairs_per',
+        'spsa_a_ratio',
+        'spsa_total_pairs',
+        'spsa_batch_pairs',
+        'spsa_seed',
+        'spsa_active_regex',
+        'spsa_mapping',
+        'spsa_inputs',
+        'spsa_early_patience',
+        'spsa_early_avg_update',
+        'spsa_early_result_var',
 
         'book_name',
-        'upload_pgns',
         'priority',
         'throughput',
-        'syzygy_wdl',
-
-        'syzygy_adj',
-        'win_adj',
-        'draw_adj',
     ]
 
     for key in tune_preset.keys():

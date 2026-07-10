@@ -42,6 +42,8 @@ from OpenBench.config import OPENBENCH_CONFIG
 from OpenBench.models import *
 from OpenBench.stats import TrinomialSPRT, PentanomialSPRT
 
+import OpenBench.spsa_params
+
 
 import OpenBench.views
 import OpenBench.model_utils
@@ -527,6 +529,11 @@ def update_test(request, machine):
     result_id  = int(request.POST['result_id' ])
     test_id    = int(request.POST['test_id'   ])
 
+    # SPSA は rshogi ラッパーの専用エンドポイント (update_spsa_workload) で
+    # 進捗を受けるため、対局結果としては受け付けない
+    if Test.objects.get(id=test_id).test_mode == 'SPSA':
+        return { 'stop' : True }
+
     # Trinomial Implementation
     losses, draws, wins = map(int, request.POST['trinomial'].split())
     games = losses + draws + wins
@@ -578,15 +585,6 @@ def update_test(request, machine):
             test.failed   = test.games >= test.max_games and test.wins <  test.losses
             test.finished = test.passed or test.failed
 
-        elif test.test_mode == 'SPSA':
-
-            # Update each parameter, as determined by the Worker
-            for name, param in test.spsa['parameters'].items():
-                x = param['value'] + float(request.POST['spsa_%s' % (name)])
-                param['value'] = max(param['min'], min(param['max'], x))
-
-            test.finished = test.games >= 2 * test.spsa['pairs_per'] * test.spsa['iterations']
-
         elif test.test_mode == 'DATAGEN':
 
             # Finished, and always passing, for a completed DATAGEN Workload
@@ -613,6 +611,100 @@ def update_test(request, machine):
     # Update Profile object; No risk from concurrent access
     Profile.objects.filter(user=Machine.objects.get(id=machine_id).user).update(
         games=F('games') + games,
+        updated=timezone.now()
+    )
+
+    # Update Machine object; No risk from concurrent access
+    Machine.objects.filter(id=machine_id).update(
+        updated=timezone.now()
+    )
+
+    return [{}, { 'stop' : True }][test.finished]
+
+
+def update_spsa_workload(request, machine):
+
+    ## rshogi の spsa を回しているワーカーからの進捗報告。1 つの SPSA ワークロード
+    ## は常に 1 台のワーカーが専有するため、対局数・勝敗はワーカー報告の累計値で
+    ## 上書きする (加算しない)。パラメータの現在値は state.params の内容で更新する
+
+    machine_id = int(request.POST['machine_id'])
+    result_id  = int(request.POST['result_id' ])
+    test_id    = int(request.POST['test_id'   ])
+
+    completed_pairs   = int(request.POST.get('completed_pairs',   0))
+    completed_batches = int(request.POST.get('completed_batches', 0))
+    total_games       = int(request.POST.get('total_games',       0))
+
+    wins   = int(request.POST.get('wins',   0)) # rshogi の plus 側視点
+    losses = int(request.POST.get('losses', 0))
+    draws  = int(request.POST.get('draws',  0))
+
+    state_params = request.POST.get('state_params', '')
+    finished     = request.POST.get('finished', '0') == '1'
+    final_params = request.POST.get('final_params', '')
+
+    with transaction.atomic():
+
+        test = Test.objects.select_for_update().get(id=test_id)
+
+        if test.finished or test.deleted:
+            return { 'stop' : True }
+
+        if test.test_mode != 'SPSA' or test.spsa.get('wrapper') != 'RSHOGI':
+            return { 'error' : 'Not an rshogi SPSA workload' }
+
+        games_before  = test.games
+        wins_before   = test.wins
+        losses_before = test.losses
+        draws_before  = test.draws
+
+        # 累計値で上書き (このワークロードの実行者は常に 1 台)
+        test.games  = total_games
+        test.wins   = wins
+        test.losses = losses
+        test.draws  = draws
+
+        spsa = test.spsa
+
+        # 現在値を state.params の内容へ更新 (知らない名前は無視)
+        if state_params:
+            values = OpenBench.spsa_params.parse_state_params_text(state_params)
+            for name, value in values.items():
+                if name in spsa['parameters']:
+                    spsa['parameters'][name]['value'] = value
+            spsa['state_params'] = state_params
+
+        spsa['progress'] = {
+            'completed_pairs'     : completed_pairs,
+            'completed_batches'   : completed_batches,
+            'total_games'         : total_games,
+            'last_raw_result'     : float(request.POST.get('last_raw_result',     0.0)),
+            'last_avg_abs_update' : float(request.POST.get('last_avg_abs_update', 0.0)),
+            'updated_at'          : timezone.now().isoformat(),
+            'machine_id'          : machine_id,
+        }
+
+        if finished:
+            spsa['final_params'] = final_params or state_params
+            test.passed = test.finished = True
+
+        test.spsa = spsa
+        test.save()
+
+    # Result はこのマシンの寄与分だけ加算する (途中参加でも二重計上しない)
+    games_delta = max(0, total_games - games_before)
+    Result.objects.filter(id=result_id).update(
+        games   = F('games')  + games_delta,
+        wins    = F('wins')   + max(0, wins   - wins_before),
+        losses  = F('losses') + max(0, losses - losses_before),
+        draws   = F('draws')  + max(0, draws  - draws_before),
+        updated = timezone.now(),
+    )
+
+    # Update Profile object; No risk from concurrent access
+    Profile.objects.filter(user=Machine.objects.get(id=machine_id).user).update(
+        games=F('games') + games_delta,
         updated=timezone.now()
     )
 

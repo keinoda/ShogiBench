@@ -49,6 +49,7 @@ from concurrent.futures import ThreadPoolExecutor
 import bench
 import genfens
 import pgn_util
+import spsa_rshogi
 import utils
 
 ## Local imports from client are an exception
@@ -59,7 +60,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 53 # Client version to send to the Server
+CLIENT_VERSION   = 54 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -859,6 +860,9 @@ def cleanup_client():
         if file_age(os.path.join('Networks', file)) > SECONDS_PER_MONTH:
             os.remove(os.path.join('Networks', file))
 
+    # 実行中でない SPSA (rshogi) の残骸 run dir も一ヶ月で掃除する
+    spsa_rshogi.cleanup_stale_runs(SECONDS_PER_MONTH)
+
 def validate_syzygy_exists(config, K):
 
     letters = ['', 'Q', 'R', 'B', 'N', 'P']
@@ -1206,6 +1210,10 @@ def complete_workload(config):
     # Scale time control based on the Engine's local NPS
     scale_factor = determine_scale_factor(config, dev_name, dev_network, base_name, base_network)
 
+    # SPSA は rshogi の spsa チューナーを 1 コピー実行する専用経路へ
+    if config.workload['test']['type'] == 'SPSA':
+        return complete_spsa_workload(config, dev_name, scale_factor)
+
     # Server knows how many copies of the match runner we should run
     runner_cnt      = config.workload['distribution']['runner-count']
     concurrency_per = config.workload['distribution']['concurrency-per']
@@ -1476,6 +1484,72 @@ def safe_run_benchmarks(config, branch, engine, network):
     return speed
 
 
+def collect_spsa_usi_options(config):
+
+    ## rshogi spsa に --usi-option として渡す (name, value) の一覧。
+    ## Network 由来の必須設定 (EvalDir / progress / eval_options.txt) を先に置き、
+    ## テスト作成時のオプション欄がそれ以外を上書きできるようにする。
+    ## Threads / Hash は rshogi のフラグ (--threads / --hash-mb) 側で渡すので除く
+
+    staged  = stage_network_options(config, 'dev', prefix='')
+    managed = { name.lower() for name, value in staged }
+
+    options    = config.workload['test']['dev']['options']
+    staged_dir = staged_network_dir(config, 'dev')
+    if '{DIR}' in options:
+        if not staged_dir:
+            print ('Warning: {DIR} used, but dev has no staged network directory')
+        options = options.replace('{DIR}', staged_dir)
+
+    pairs = list(staged)
+    for token in re.findall(r'"[^"]*"|\S+', options):
+
+        if '=' not in token:
+            print ('Ignoring malformed option token: %s' % (token))
+            continue
+
+        name, value = token.split('=', 1)
+
+        # rshogi へはフラグで渡す
+        if name.lower() in ('threads', 'hash', 'usi_hash'):
+            continue
+
+        # ファイル位置系はワーカーが所有する (存在しない eval を指す事故の防止)
+        if name.lower() in managed:
+            print ('Ignoring option %s: managed by the worker' % (name))
+            continue
+
+        pairs.append((name, value.strip('"')))
+
+    return pairs
+
+def complete_spsa_workload(config, dev_name, scale_factor):
+
+    ## SPSA (rshogi ラッパー)。対局・SPSA スケジュール・θ 更新はすべて rshogi の
+    ## spsa チューナーが担い、ワーカーは起動・監視・進捗報告だけを行う
+
+    threads = int(extract_option(config.workload['test']['dev']['options'], 'Threads') or 1)
+    hash_mb = int(extract_option(config.workload['test']['dev']['options'], 'Hash') or 16)
+
+    engine_path = os.path.abspath(os.path.join('Engines', dev_name))
+    book_path   = os.path.abspath(os.path.join('Books', config.workload['test']['book']['name']))
+    usi_options = collect_spsa_usi_options(config)
+
+    spsa_rshogi.run_workload(
+        config, ServerReporter, engine_path, usi_options, book_path,
+        threads, hash_mb, scale_factor)
+
+def extract_option(options, option):
+
+    if (match := re.search('(?<=%s=")[^"]*' % (option), options)):
+        return match.group()
+
+    if (match := re.search('(?<=%s=\')[^\']*' % (option), options)):
+        return match.group()
+
+    if (match := re.search('(?<=%s=)[^ ]*' % (option), options)):
+        return match.group()
+
 def build_runner_command(config, dev_cmd, base_cmd, scale_factor, timestamp, runner_idx):
 
     flags  = ' ' + MatchRunner.basic_settings(config)
@@ -1551,11 +1625,13 @@ def reload_local_imports():
     import bench
     import genfens
     import pgn_util
+    import spsa_rshogi
     import utils
 
     importlib.reload(bench)
     importlib.reload(genfens)
     importlib.reload(pgn_util)
+    importlib.reload(spsa_rshogi)
     importlib.reload(utils)
 
 def parse_arguments(client_args):

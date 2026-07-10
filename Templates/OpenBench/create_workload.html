@@ -123,28 +123,20 @@
 
                 {% elif workload == "TUNE" %}
 
-                    <h3> SPSA 方式 </h3>
+                    <h3> SPSA 入力 (.params) </h3>
+
+                    <p style="font-size: small; color: var(--color-font2); margin: 0 0 4px 24px;">
+                        rshogi / tune.py 共通の7カラム形式:
+                        <code>名前, int|float, 現在値, min, max, C_end, R_end</code>。
+                        <code>//</code> コメント・<code>[[NOT USED]]</code> 行もそのまま貼り付け可。
+                        名前は TUNE ビルドの USI オプション名
+                        (マッピング=YaneuraOu のときは rshogi 正準名)。
+                    </p>
 
                     <div class="row">
-                        <label for="spsa_reporting_type"> レポート方式 </label>
-                        <select id="spsa_reporting_type" name="spsa_reporting_type">
-                            <option selected value="BATCHED"> Batched </option>
-                            <option value="BULK"> Bulk </option>
-                        </select>
-                    </div>
-
-                    <div class="row">
-                        <label for="spsa_distribution_type"> 分布 </label>
-                        <select id="spsa_distribution_type" name="spsa_distribution_type">
-                            <option selected value="SINGLE"> Single </option>
-                            <option value="MULTIPLE"> Multiple </option>
-                        </select>
-                    </div>
-
-                    <h3> SPSA 入力 </h3>
-
-                    <div class="row">
-                        <textarea style="margin-left:24px" id="spsa_inputs" name="spsa_inputs" rows=9></textarea>
+                        <textarea style="margin-left:24px; font-family: monospace;"
+                                  id="spsa_inputs" name="spsa_inputs" rows=14
+                                  placeholder="例: PARAM_FUTILITY_MARGIN_ALPHA1, int, 100, 50, 200, 8, 0.0020"></textarea>
                     </div>
 
                 {% endif %}
@@ -179,8 +171,16 @@
 
                 {% elif workload == "TUNE" %}
 
-                    <h3> SPSA 設定 </h3>
+                    <h3> SPSA 設定 (rshogi) </h3>
 
+                    <div class="row">
+                        <label for="spsa_total_pairs" title="SPSA全体のゲームペア数。総対局数 = 2×この値。目安: パラメータ数×50〜500"> 総ペア数 </label>
+                        <input value="25600" id="spsa_total_pairs" name="spsa_total_pairs">
+                    </div>
+                    <div class="row">
+                        <label for="spsa_batch_pairs" title="1バッチのペア数。バッチごとにθを1回更新。並列対局数は 2×この値 が上限なので、ワーカーのスレッド数/2 以上を推奨"> バッチペア数 </label>
+                        <input value="64" id="spsa_batch_pairs" name="spsa_batch_pairs">
+                    </div>
                     <div class="row">
                         <label for="spsa_alpha"> Alpha </label> <input value="0.602" id="spsa_alpha" name="spsa_alpha">
                     </div>
@@ -188,13 +188,37 @@
                         <label for="spsa_gamma"> Gamma </label> <input value="0.101" id="spsa_gamma" name="spsa_gamma">
                     </div>
                     <div class="row">
-                        <label for="spsa_A_ratio"> A-Ratio </label> <input value="0.1" id="spsa_A_ratio" name="spsa_A_ratio">
+                        <label for="spsa_a_ratio"> A-Ratio </label> <input value="0.1" id="spsa_a_ratio" name="spsa_a_ratio">
                     </div>
                     <div class="row">
-                        <label for="spsa_iterations"> 反復回数 </label> <input value="25000" id="spsa_iterations" name="spsa_iterations">
+                        <label for="spsa_seed" title="空欄=ランダム。同じseedなら同じθ軌跡を再現できます"> 乱数 Seed </label>
+                        <input value="1" id="spsa_seed" name="spsa_seed" placeholder="(空欄=ランダム)">
                     </div>
                     <div class="row">
-                        <label for="spsa_pairs_per"> ペア数/点 </label> <input value="8" id="spsa_pairs_per" name="spsa_pairs_per">
+                        <label for="spsa_active_regex" title="チューニング対象を名前の正規表現で絞ります。空欄=NOT USED以外すべて"> 対象絞り込み </label>
+                        <input id="spsa_active_regex" name="spsa_active_regex" placeholder="(任意) 例: ^(SPSA_LMR|SPSA_NMP)_">
+                    </div>
+                    <div class="row">
+                        <label for="spsa_mapping" title="params の名前が rshogi 正準名 (SPSA_*) のときは YaneuraOu を選ぶと setoption 時にYO名へ翻訳されます"> 名前マッピング </label>
+                        <select id="spsa_mapping" name="spsa_mapping">
+                            <option selected value="NONE"> なし (名前=USIオプション) </option>
+                            <option value="YO"> YaneuraOu (yo_rshogi_mapping.toml) </option>
+                        </select>
+                    </div>
+
+                    <h3> 早期停止 (任意) </h3>
+
+                    <div class="row">
+                        <label for="spsa_early_patience" title="条件が連続成立したら停止。空欄/0=無効"> Patience </label>
+                        <input id="spsa_early_patience" name="spsa_early_patience" placeholder="(空欄=無効)">
+                    </div>
+                    <div class="row">
+                        <label for="spsa_early_avg_update" title="avg|update| がこの値以下"> avg|update| ≦ </label>
+                        <input id="spsa_early_avg_update" name="spsa_early_avg_update" placeholder="(patience使用時に必須)">
+                    </div>
+                    <div class="row">
+                        <label for="spsa_early_result_var" title="|raw_result|/batch_pairs (0〜1) がこの値以下"> |raw|/batch ≦ </label>
+                        <input id="spsa_early_result_var" name="spsa_early_result_var" placeholder="(patience使用時に必須)">
                     </div>
 
                 {% elif workload == "DATAGEN" %}
@@ -230,19 +254,21 @@
                     </select>
                 </div>
 
-                <div class="row">
-                    <label for="upload_pgns"> 棋譜保存 </label>
-                    <select id="upload_pgns" name="upload_pgns">
-                        {% if workload == "DATAGEN" %}
-                            <option selected value="COMPACT"> Compact </option>
-                            <option value="VERBOSE"> Verbose </option>
-                        {% else %}
-                            <option selected value="FALSE"> False </option>
-                            <option value="COMPACT"> Compact </option>
-                            <option value="VERBOSE"> Verbose </option>
-                        {% endif %}
-                    </select>
-                </div>
+                {% if workload != "TUNE" %}
+                    <div class="row">
+                        <label for="upload_pgns"> 棋譜保存 </label>
+                        <select id="upload_pgns" name="upload_pgns">
+                            {% if workload == "DATAGEN" %}
+                                <option selected value="COMPACT"> Compact </option>
+                                <option value="VERBOSE"> Verbose </option>
+                            {% else %}
+                                <option selected value="FALSE"> False </option>
+                                <option value="COMPACT"> Compact </option>
+                                <option value="VERBOSE"> Verbose </option>
+                            {% endif %}
+                        </select>
+                    </div>
+                {% endif %}
 
                 <div class="row">
                     <label for="priority"> 優先度 </label> <input value="0" id="priority" name="priority">
@@ -258,37 +284,39 @@
                     </div>
                 {% endif %}
 
-                <div class="row">
-                    <label for="syzygy_wdl"> Syzygy WDL </label> <select id="syzygy_wdl" name="syzygy_wdl">
-                        <option selected value="DISABLED"> Disabled </option>
-                        <option value="OPTIONAL"> Optional </option>
-                        <option value="7-MAN"> 7-Man </option>
-                        <option value="6-MAN"> 6-Man </option>
-                        <option value="5-MAN"> 5-Man </option>
-                        <option value="4-MAN"> 4-Man </option>
-                        <option value="3-MAN"> 3-Man </option>
-                    </select>
-                </div>
+                {% if workload != "TUNE" %}
+                    <div class="row">
+                        <label for="syzygy_wdl"> Syzygy WDL </label> <select id="syzygy_wdl" name="syzygy_wdl">
+                            <option selected value="DISABLED"> Disabled </option>
+                            <option value="OPTIONAL"> Optional </option>
+                            <option value="7-MAN"> 7-Man </option>
+                            <option value="6-MAN"> 6-Man </option>
+                            <option value="5-MAN"> 5-Man </option>
+                            <option value="4-MAN"> 4-Man </option>
+                            <option value="3-MAN"> 3-Man </option>
+                        </select>
+                    </div>
 
-                <h3> 判定設定 </h3>
-                <div class="row">
-                    <label for="syzygy_adj"> Syzygy 判定 </label>
-                    <select id="syzygy_adj" name="syzygy_adj">
-                        <option value="DISABLED"> Disabled </option>
-                        <option selected value="OPTIONAL"> Optional </option>
-                        <option value="7-MAN"> 7-Man </option>
-                        <option value="6-MAN"> 6-Man </option>
-                        <option value="5-MAN"> 5-Man </option>
-                        <option value="4-MAN"> 4-Man </option>
-                        <option value="3-MAN"> 3-Man </option>
-                    </select>
-                </div>
-                <div class="row">
-                    <label for="win_adj"> 勝ち判定 </label> <input id="win_adj" name="win_adj">
-                </div>
-                <div class="row">
-                    <label for="draw_adj"> 引き分け判定 </label> <input id="draw_adj" name="draw_adj">
-                </div>
+                    <h3> 判定設定 </h3>
+                    <div class="row">
+                        <label for="syzygy_adj"> Syzygy 判定 </label>
+                        <select id="syzygy_adj" name="syzygy_adj">
+                            <option value="DISABLED"> Disabled </option>
+                            <option selected value="OPTIONAL"> Optional </option>
+                            <option value="7-MAN"> 7-Man </option>
+                            <option value="6-MAN"> 6-Man </option>
+                            <option value="5-MAN"> 5-Man </option>
+                            <option value="4-MAN"> 4-Man </option>
+                            <option value="3-MAN"> 3-Man </option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <label for="win_adj"> 勝ち判定 </label> <input id="win_adj" name="win_adj">
+                    </div>
+                    <div class="row">
+                        <label for="draw_adj"> 引き分け判定 </label> <input id="draw_adj" name="draw_adj">
+                    </div>
+                {% endif %}
 
                 <h3> スケーリング設定 </h3>
                 <div class="row">

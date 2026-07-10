@@ -31,6 +31,7 @@
 
 import math
 
+import OpenBench.spsa_params
 import OpenBench.utils
 import OpenBench.views
 
@@ -210,7 +211,6 @@ def create_new_tune(request):
     test                  = Test()
     test.author           = request.user.username
     test.book_name        = request.POST['book_name']
-    test.upload_pgns      = request.POST['upload_pgns']
 
     test.dev              = test.base              = get_engine(*dev_info)
     test.dev_display      = test.base_display      = request.POST.get('dev_display', '').strip()[:64]
@@ -223,20 +223,24 @@ def create_new_tune(request):
     test.dev_build_name, test.dev_build_args = resolve_build_variant(request, 'dev_engine', 'dev_build')
     test.base_build_name, test.base_build_args = test.dev_build_name, test.dev_build_args
 
-    test.workload_size    = int(request.POST['spsa_pairs_per'])
     test.priority         = int(request.POST['priority'])
     test.throughput       = int(request.POST['throughput'])
 
-    test.syzygy_wdl       = request.POST['syzygy_wdl']
-    test.syzygy_adj       = request.POST['syzygy_adj']
-    test.win_adj          = request.POST['win_adj']
-    test.draw_adj         = request.POST['draw_adj']
+    test.scale_method     = request.POST['scale_method']
+    test.scale_nps        = int(request.POST['scale_nps'])
 
-    test.scale_method      = request.POST['scale_method']
-    test.scale_nps         = int(request.POST['scale_nps'])
+    # rshogi spsa が対局を丸ごと担うため、棋譜保存・Syzygy・勝敗判定は使わない
+    test.upload_pgns      = 'FALSE'
+    test.syzygy_wdl       = 'DISABLED'
+    test.syzygy_adj       = 'DISABLED'
+    test.win_adj          = 'None'
+    test.draw_adj         = 'None'
 
     test.test_mode        = 'SPSA'
-    test.spsa             = extract_spas_params(request)
+    test.spsa             = extract_spsa_config(request)
+
+    # 表示用: 1 バッチのペア数を割当サイズとして残す
+    test.workload_size    = test.spsa['batch_pairs']
 
     test.awaiting         = not dev_has_all
 
@@ -323,50 +327,54 @@ def create_new_datagen(request):
 
     return test, None
 
-def extract_spas_params(request):
+def extract_spsa_config(request):
 
-    spsa = {} # SPSA Hyperparams
-    spsa['Alpha'  ] = float(request.POST['spsa_alpha'])
-    spsa['Gamma'  ] = float(request.POST['spsa_gamma'])
-    spsa['A_ratio'] = float(request.POST['spsa_A_ratio'])
+    ## rshogi ラッパー用の SPSA 設定。スケジュール計算 (c_k, a_k) は rshogi 側が
+    ## fishtest 互換で行うので、サーバはフラグと .params 原文を保持するだけでよい。
+    ## 'parameters' は GUI 表示用のビューで、current 値はワーカー報告で更新される
 
-    # Tuning durations
-    spsa['iterations'] = int(request.POST['spsa_iterations'])
-    spsa['pairs_per' ] = int(request.POST['spsa_pairs_per'])
-    spsa['A'         ] = spsa['A_ratio'] * spsa['iterations']
+    params_text = OpenBench.spsa_params.normalize_params_text(request.POST['spsa_inputs'])
+    rows, _     = OpenBench.spsa_params.parse_params_text(params_text)
 
-    # Tuning Methodologies
-    spsa['reporting_type'   ] = request.POST['spsa_reporting_type']
-    spsa['distribution_type'] = request.POST['spsa_distribution_type']
+    seed = request.POST.get('spsa_seed', '').strip()
 
-    # Each individual tuning parameter
-    spsa['parameters'] = {}
-    for index, line in enumerate(request.POST['spsa_inputs'].split('\n')):
+    early_patience = request.POST.get('spsa_early_patience', '').strip()
+    early_stop     = { 'patience' : 0, 'avg_abs_update' : None, 'result_variance' : None }
+    if early_patience and int(early_patience) > 0:
+        early_stop = {
+            'patience'        : int(early_patience),
+            'avg_abs_update'  : float(request.POST['spsa_early_avg_update']),
+            'result_variance' : float(request.POST['spsa_early_result_var']),
+        }
 
-        # Comma-seperated values, already verified in verify_workload()
-        name, data_type, value, minimum, maximum, c_end, r_end = line.split(',')
+    return {
+        # 新旧スキーマの判別子。旧 (分散SPSA) レコードにはこのキーが無い
+        'wrapper'      : 'RSHOGI',
 
-        # Recall the original order of inputs
-        param          = {}
-        param['index'] = index
+        # rshogi spsa の fishtest 互換スケジュール設定
+        'alpha'        : float(request.POST['spsa_alpha']),
+        'gamma'        : float(request.POST['spsa_gamma']),
+        'a_ratio'      : float(request.POST['spsa_a_ratio']),
+        'total_pairs'  : int(request.POST['spsa_total_pairs']),
+        'batch_pairs'  : int(request.POST['spsa_batch_pairs']),
+        'seed'         : int(seed) if seed != '' else None,
 
-        # Raw extraction
-        param['float'] = data_type.strip() == 'float'
-        param['start'] = float(value)
-        param['value'] = float(value)
-        param['min'  ] = float(minimum)
-        param['max'  ] = float(maximum)
-        param['c_end'] = float(c_end)
-        param['r_end'] = float(r_end)
+        # 対象の絞り込みと名前空間変換
+        'active_regex' : request.POST.get('spsa_active_regex', '').strip(),
+        'mapping'      : request.POST.get('spsa_mapping', 'NONE'),
+        'early_stop'   : early_stop,
 
-        # Verbatim Fishtest logic for computing these
-        param['c']     = param['c_end'] * spsa['iterations'] ** spsa['Gamma']
-        param['a_end'] = param['r_end'] * param['c_end'] ** 2
-        param['a']     = param['a_end'] * (spsa['A'] + spsa['iterations']) ** spsa['Alpha']
+        # ワーカーが --init-from に書き出す canonical .params の原文
+        'params_text'  : params_text,
 
-        spsa['parameters'][name] = param
+        # GUI 表示用 (current 値はワーカー報告で更新)
+        'parameters'   : OpenBench.spsa_params.rows_to_parameters(rows),
 
-    return spsa
+        # ワーカーからの進捗報告で更新される欄
+        'progress'     : {},
+        'state_params' : '',
+        'final_params' : '',
+    }
 
 def get_engine(source, name, sha, bench):
 

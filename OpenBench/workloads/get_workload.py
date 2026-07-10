@@ -23,7 +23,6 @@
 #
 # Refer to: https://github.com/AndyGrant/OpenBench/wiki/Workload-Assignment
 
-import math
 import random
 import re
 import sys
@@ -131,6 +130,9 @@ def filter_valid_workloads(request, machine):
     if machine.info.get('noisy'):
         workloads = [x for x in workloads if not OpenBench.utils.workload_uses_time_based_tc(x)]
 
+    # Skip SPSA workloads this machine cannot serve (rshogi ラッパーの制約)
+    workloads = [x for x in workloads if valid_spsa_assignment(x, machine)]
+
     # Skip workloads that we have insufficient threads to play
     options = [x for x in workloads if valid_hardware_assignment(x, machine)]
 
@@ -150,6 +152,28 @@ def filter_valid_workloads(request, machine):
         candidates = list(filter(lambda x: x.dev_engine in focuses, candidates))
 
     return candidates, has_focus
+
+def valid_spsa_assignment(workload, machine):
+
+    ## SPSA (rshogi ラッパー) は 1 台のワーカーが rshogi の spsa を丸ごと実行する。
+    ## - 旧スキーマ (分散SPSA) のレコードは新ワーカーでは実行できないので配らない
+    ## - rshogi のビルド・実行は Linux ワーカーのみサポート
+    ## - 既に他のマシンが走らせている間は誰にも配らない (単一ランナー専有)
+
+    if workload.test_mode != 'SPSA':
+        return True
+
+    if not isinstance(workload.spsa, dict) or workload.spsa.get('wrapper') != 'RSHOGI':
+        return False
+
+    if machine.info.get('os_name') != 'Linux':
+        return False
+
+    for other in OpenBench.utils.getRecentMachines(minutes=3):
+        if other.id != machine.id and other.workload == workload.id:
+            return False
+
+    return True
 
 def valid_hardware_assignment(workload, machine):
 
@@ -272,9 +296,8 @@ def workload_to_dictionary(test, result, machine):
         'private'      : OPENBENCH_CONFIG['engines'][test.base_engine]['private'],
     }
 
-    workload['distribution']   = game_distribution(test, machine)
-    workload['spsa']           = spsa_to_dictionary(test, workload)
-    workload['reporting_type'] = test.spsa.get('reporting_type', 'BATCHED')
+    workload['distribution'] = game_distribution(test, machine)
+    workload['spsa']         = spsa_to_dictionary(test, machine)
 
     with transaction.atomic():
 
@@ -282,11 +305,15 @@ def workload_to_dictionary(test, result, machine):
         workload['test']['book_seed' ] = test.id
         workload['test']['book_index'] = test.book_index
 
-        runner_cnt    = workload['distribution']['runner-count']
-        pairs_per_cnt = workload['distribution']['games-per-runner'] // 2
-        per_opening   = 2 if (test.test_mode == 'DATAGEN' and not test.play_reverses) else 1
+        # SPSA (rshogi ラッパー) は開始局面を rshogi 側が seed から抽選するため、
+        # 開始局面インデックスを消費しない
+        if test.test_mode != 'SPSA':
 
-        test.book_index += runner_cnt * pairs_per_cnt * per_opening
+            runner_cnt    = workload['distribution']['runner-count']
+            pairs_per_cnt = workload['distribution']['games-per-runner'] // 2
+            per_opening   = 2 if (test.test_mode == 'DATAGEN' and not test.play_reverses) else 1
+
+            test.book_index += runner_cnt * pairs_per_cnt * per_opening
 
         if test.test_mode == 'DATAGEN':
             workload['test']['genfens_seeds'] = [
@@ -296,66 +323,49 @@ def workload_to_dictionary(test, result, machine):
 
     return workload
 
-def spsa_to_dictionary(test, workload):
+def spsa_to_dictionary(test, machine):
+
+    ## rshogi ラッパーの SPSA 設定一式。ワーカーはこれをそのまま rshogi の
+    ## spsa コマンドラインへ変換する。carry は「以前のラン (別マシン含む) までの
+    ## 累計」で、途中から引き継ぐ場合の累計報告のベースになる
 
     if test.test_mode != 'SPSA':
         return None
 
-    # Only use one set of parameters if distribution is SINGLE.
-    # Duplicate the params, even though they are the same, across all
-    # Sockets on the machine, in the event of a singular SPSA distribution
-    is_single    = test.spsa['distribution_type'] == 'SINGLE'
-    permutations = 1 if is_single else workload['distribution']['runner-count']
-    duplicates   = 1 if not is_single else workload['distribution']['runner-count']
+    spsa     = test.spsa
+    progress = spsa.get('progress', {}) or {}
 
-    # C & R are scaled over the course of the iterations
-    iteration     = 1 + (test.games / (test.spsa['pairs_per'] * 2))
-    c_compression = iteration ** test.spsa['Gamma']
-    r_compression = (test.spsa['A'] + iteration) ** test.spsa['Alpha']
+    # 1 batch で並列実行できる対局数は 2 × batch_pairs が上限 (rshogi の仕様)
+    engine_threads = int(OpenBench.utils.extract_option(test.dev_options, 'Threads') or 1)
+    max_games      = machine.info['concurrency'] // max(1, engine_threads)
+    concurrency    = max(1, min(max_games, 2 * spsa['batch_pairs']))
 
-    spsa = {}
-    for name, param in test.spsa['parameters'].items():
+    return {
+        'wrapper'      : 'RSHOGI',
 
-        spsa[name] = {
-            'dev'  : [], # One for each Permutation the Worker will run
-            'base' : [], # One for each Permutation the Worker will run
-            'flip' : [], # One for each Permutation the Worker will run
-        }
+        'alpha'        : spsa['alpha'],
+        'gamma'        : spsa['gamma'],
+        'a_ratio'      : spsa['a_ratio'],
+        'total_pairs'  : spsa['total_pairs'],
+        'batch_pairs'  : spsa['batch_pairs'],
+        'seed'         : spsa.get('seed'),
 
-        # C & R are constants for a particular assignment, for all Permutations
-        spsa[name]['c'] = max(param['c'] / c_compression, 0.00 if param['float'] else 0.50)
-        spsa[name]['r'] = param['a'] / r_compression / spsa[name]['c'] ** 2
+        'active_regex' : spsa.get('active_regex', ''),
+        'mapping'      : spsa.get('mapping', 'NONE'),
+        'early_stop'   : spsa.get('early_stop', { 'patience' : 0 }),
 
-        for f in range(permutations):
+        'params_text'  : spsa['params_text'],
+        'state_params' : spsa.get('state_params', ''),
+        'concurrency'  : concurrency,
 
-            # Adjust current best by +- C
-            flip = 1 if random.getrandbits(1) else -1
-            dev  = param['value'] + flip * spsa[name]['c']
-            base = param['value'] - flip * spsa[name]['c']
-
-            # Probabilistic rounding for Integer types
-            if not param['float']:
-                r    = random.uniform(0, 1)
-                dev  = math.floor(dev  + r)
-                base = math.floor(base + r)
-
-            # Clip within [Min, Max]
-            dev  = max(param['min'], min(param['max'], dev ))
-            base = max(param['min'], min(param['max'], base))
-
-            # Round integer values down
-            if not param['float']:
-                dev  = int(dev )
-                base = int(base)
-
-            # Append each permutation
-            for g in range(duplicates):
-                spsa[name]['dev' ].append(dev)
-                spsa[name]['base'].append(base)
-                spsa[name]['flip'].append(flip)
-
-
-    return spsa
+        'carry' : {
+            'pairs'  : progress.get('completed_pairs', 0),
+            'games'  : progress.get('total_games', 0),
+            'wins'   : test.wins,
+            'losses' : test.losses,
+            'draws'  : test.draws,
+        },
+    }
 
 def extract_option(options, option):
 
@@ -387,14 +397,17 @@ def game_distribution(test, machine):
     # Max possible concurrent engine games, per copy of match runner
     max_concurrency = (worker_threads // worker_sockets) // max(dev_threads, base_threads)
 
-    # Number of params being evaluated at a single time, if doing SPSA in SINGLE mode
-    spsa_count = (worker_threads // max(dev_threads, base_threads)) // 2
-
-    # SPSA is treated specially, if we are distributing many parameter sets at once
-    is_multiple_spsa = test.test_mode == 'SPSA' and test.spsa['distribution_type'] == 'MULTIPLE'
+    # SPSA (rshogi ラッパー) は 1 コピーの rshogi spsa が全対局を回す。
+    # 数値は情報表示用で、実際の並列度は spsa_to_dictionary が決める
+    if test.test_mode == 'SPSA':
+        return {
+            'runner-count'     : 1,
+            'concurrency-per'  : max_concurrency,
+            'games-per-runner' : 2 * test.spsa['total_pairs'],
+        }
 
     return {
-        'runner-count'     : spsa_count if is_multiple_spsa else worker_sockets,
-        'concurrency-per'  : 2 if is_multiple_spsa else max_concurrency,
-        'games-per-runner' : 2 * test.workload_size * (1 if is_multiple_spsa else max_concurrency),
+        'runner-count'     : worker_sockets,
+        'concurrency-per'  : max_concurrency,
+        'games-per-runner' : 2 * test.workload_size * max_concurrency,
     }

@@ -107,9 +107,24 @@
 
     "tune_presets" : {
         "default" : {
-            "book_name" : "6moves_v1_shogi_sfen.epd",
-            "win_adj"   : "movecount=3 score=2000",
-            "draw_adj"  : "movenumber=40 movecount=8 score=10"
+            "book_name"         : "taya36_shogi_sfen.epd",
+            "both_options"      : "Threads=1 Hash=16 USI_OwnBook=false NetworkDelay=0 NetworkDelay2=0 MinimumThinkingTime=100 RoundUpToFullSecond=false",
+            "both_time_control" : "2.0+0.02",
+            "spsa_alpha"        : "0.602",
+            "spsa_gamma"        : "0.101",
+            "spsa_a_ratio"      : "0.1",
+            "spsa_seed"         : "1",
+            "spsa_mapping"      : "NONE"
+        },
+
+        "本番 tc=2+0.02 (fuuppi実績)" : {
+            "spsa_total_pairs"  : "51200",
+            "spsa_batch_pairs"  : "96"
+        },
+
+        "小規模 (〜30パラメータ)" : {
+            "spsa_total_pairs"  : "6400",
+            "spsa_batch_pairs"  : "32"
         }
     }
 }

@@ -43,6 +43,7 @@ import requests
 import traceback
 
 import OpenBench.config
+import OpenBench.spsa_params
 import OpenBench.utils
 
 from OpenBench.models import *
@@ -156,12 +157,13 @@ def verify_test_creation(errors, request):
 
 def verify_tune_creation(errors, request):
 
+    # SPSA (rshogi ラッパー): 対局・スケジュールは丸ごと rshogi の spsa が担うので、
+    # ここでは .params テキストと rshogi へ渡すフラグ類だけを検証する
+
     verifications = [
 
-        # Verify the SPSA raw inputs and methods
+        # Verify the SPSA raw inputs
         (verify_spsa_inputs           , 'spsa_inputs'),
-        (verify_spsa_reporting_type   , 'spsa_reporting_type', 'Reporting Method'),
-        (verify_spsa_distribution_type, 'spsa_distribution_type', 'Distribution Method'),
 
         # Verify everything about the Engine
         (verify_configuration         , 'dev_engine', 'Engine', 'engines'),
@@ -170,38 +172,36 @@ def verify_tune_creation(errors, request):
         (verify_build_variant         , 'dev_build', 'Build', 'dev_engine'),
         (verify_options               , 'dev_options', 'Threads', 'Options'),
         (verify_options               , 'dev_options', 'Hash', 'Options'),
-        (verify_time_control          , 'dev_time_control', 'Time Control'),
+        (verify_tune_time_control     , 'dev_time_control', 'Time Control'),
 
         # Verify everything about the Test Settings
         (verify_configuration         , 'book_name', 'Book', 'books'),
-        (verify_upload_pgns           , 'upload_pgns', 'Upload PGNs'),
 
         # Verify everything about the General Settings
         (verify_integer               , 'priority', 'Priority'),
         (verify_greater_than          , 'throughput', 'Throughput', 0),
-        (verify_syzygy_field          , 'syzygy_wdl', 'Syzygy WDL'),
 
         # Verify the Scaling Mechanisms
         (verify_scale_method   , 'scale_method'),
         (verify_integer        , 'scale_nps', 'Scale NPS'),
         (verify_greater_than   , 'scale_nps', 'Scale NPS', 0),
 
-        # Verify everything about the Adjudicaton Settings
-        (verify_syzygy_field          , 'syzygy_adj', 'Syzygy Adjudication'),
-        (verify_win_adj               , 'win_adj'),
-        (verify_draw_adj              , 'draw_adj'),
-
-        # Verify everything about the SPSA Settings
-        (verify_float                 , 'spsa_alpha', 'SPSA A-Ratio'),
+        # Verify everything about the SPSA (rshogi) Settings
         (verify_float                 , 'spsa_alpha', 'SPSA Alpha'),
         (verify_float                 , 'spsa_gamma', 'SPSA Gamma'),
-        (verify_integer               , 'spsa_iterations', 'SPSA Iterations'),
-        (verify_integer               , 'spsa_pairs_per', 'SPSA Pairs-Per'),
-        (verify_greater_than          , 'spsa_alpha', 'SPSA A-Ratio', 0.00),
+        (verify_float                 , 'spsa_a_ratio', 'SPSA A-Ratio'),
         (verify_greater_than          , 'spsa_alpha', 'SPSA Alpha', 0.00),
         (verify_greater_than          , 'spsa_gamma', 'SPSA Gamma', 0.00),
-        (verify_greater_than          , 'spsa_iterations', 'SPSA Iterations', 0),
-        (verify_greater_than          , 'spsa_pairs_per', 'SPSA Pairs-Per', 0),
+        (verify_greater_than          , 'spsa_a_ratio', 'SPSA A-Ratio', 0.00),
+        (verify_integer               , 'spsa_total_pairs', 'SPSA Total Pairs'),
+        (verify_integer               , 'spsa_batch_pairs', 'SPSA Batch Pairs'),
+        (verify_greater_than          , 'spsa_total_pairs', 'SPSA Total Pairs', 0),
+        (verify_greater_than          , 'spsa_batch_pairs', 'SPSA Batch Pairs', 0),
+        (verify_spsa_pair_counts      , 'spsa_total_pairs'),
+        (verify_spsa_seed             , 'spsa_seed'),
+        (verify_spsa_active_regex     , 'spsa_active_regex'),
+        (verify_spsa_mapping          , 'spsa_mapping', 'Parameter Mapping'),
+        (verify_spsa_early_stop       , 'spsa_early_patience'),
     ]
 
     for verification in verifications:
@@ -356,42 +356,83 @@ def verify_syzygy_field(errors, request, field, field_name):
 
 def verify_spsa_inputs(errors, request, field):
 
+    # rshogi / tune.py 共通の 7 カラム .params 形式。コメントや
+    # [[NOT USED]] 行も許容する (詳細は OpenBench/spsa_params.py)
     try:
-
-        if not (lines := request.POST[field].split('\n')):
-            errors.append('No Parameters Provided')
-
-        for line in lines:
-            name, data_type, value, minimum, maximum, c, r = line.split(',')
-
-            if data_type.strip() not in [ 'int', 'float' ]:
-                errors.append('Datatype must be int for float, for %s' % (name))
-
-            if float(minimum) > float(maximum):
-                errors.append('Max does not exceed Min, for %s' % (name))
-
-            if not (float(minimum) <= float(value) <= float(maximum)):
-                errors.append('Value must be within [Min, Max], for %s' % (name))
-
-            if data_type.strip() == 'float' and float(c) <= 0.00:
-                errors.append('C for floats must be > 0.00, for %s' % (name))
-
-            if float(r) <= 0.00:
-                errors.append('R must be > 0.00, for %s' % (name))
-
+        rows, row_errors = OpenBench.spsa_params.parse_params_text(request.POST[field])
+        errors.extend(row_errors)
     except:
         traceback.print_exc()
         errors.append('Malformed SPSA Input')
 
-def verify_spsa_reporting_type(errors, request, field, field_name):
-    candidates = ['BULK', 'BATCHED']
-    try: assert request.POST[field] in candidates
+def verify_tune_time_control(errors, request, field, field_name):
+
+    # rshogi spsa が対応する時間制御のみ: フィッシャー (--btime/--binc),
+    # 秒読み MT= (--byoyomi), ノード固定 N= (--nodes)
+    try:
+        parsed  = OpenBench.utils.TimeControl.parse(request.POST[field])
+        allowed = [ OpenBench.utils.TimeControl.FISCHER,
+                    OpenBench.utils.TimeControl.FIXED_TIME,
+                    OpenBench.utils.TimeControl.FIXED_NODES ]
+        if OpenBench.utils.TimeControl.control_type(parsed) not in allowed:
+            errors.append('%s: SPSAで使えるのは 秒+加算 (例 2+0.02) / MT=ミリ秒 (秒読み) / N=ノード数 です' % (field_name))
+    except:
+        errors.append('{0} is not parsable'.format(field_name))
+
+def verify_spsa_pair_counts(errors, request, field):
+    try:
+        total = int(request.POST['spsa_total_pairs'])
+        batch = int(request.POST['spsa_batch_pairs'])
+        if total < batch:
+            errors.append('SPSA Total Pairs must be at least Batch Pairs')
+    except:
+        pass # 個別の integer 検証が報告する
+
+def verify_spsa_seed(errors, request, field):
+    raw = request.POST.get(field, '').strip()
+    if raw == '':
+        return # 空欄 = ランダム seed
+    try: assert int(raw) >= 0
+    except: errors.append('SPSA Seed must be blank, or a non-negative integer')
+
+def verify_spsa_active_regex(errors, request, field):
+
+    raw = request.POST.get(field, '').strip()
+    if raw == '':
+        return
+
+    try: pattern = re.compile(raw)
+    except: return errors.append('SPSA Active Regex does not compile')
+
+    # パラメータが正しく読めているときだけ、少なくとも 1 つの
+    # 生きているパラメータに一致することを確認する
+    try: rows, row_errors = OpenBench.spsa_params.parse_params_text(request.POST['spsa_inputs'])
+    except: return
+
+    if not row_errors and not any(pattern.search(x['name']) for x in rows if not x['not_used']):
+        errors.append('SPSA Active Regex はどのチューニング対象パラメータにも一致しません')
+
+def verify_spsa_mapping(errors, request, field, field_name):
+    candidates = ['NONE', 'YO']
+    try: assert request.POST.get(field, 'NONE') in candidates
     except: errors.append('%s must be in %s' % (field_name, ', '.join(candidates)))
 
-def verify_spsa_distribution_type(errors, request, field, field_name):
-    candidates = ['SINGLE', 'MULTIPLE']
-    try: assert request.POST[field] in candidates
-    except: errors.append('%s must be in %s' % (field_name, ', '.join(candidates)))
+def verify_spsa_early_stop(errors, request, field):
+
+    # 早期停止は 3 点セット: patience > 0 のときだけ有効で、その場合は
+    # 両方の閾値が必要 (rshogi 側の判定が両閾値の AND のため)
+    patience = request.POST.get('spsa_early_patience', '').strip()
+    avg_thr  = request.POST.get('spsa_early_avg_update', '').strip()
+    var_thr  = request.POST.get('spsa_early_result_var', '').strip()
+
+    if not patience and not avg_thr and not var_thr:
+        return
+
+    try: assert int(patience) > 0
+    except: return errors.append('早期停止を使うには patience に正の整数を指定してください')
+
+    try: assert float(avg_thr) > 0.0 and float(var_thr) > 0.0
+    except: errors.append('早期停止には avg|update| と |raw|/batch の両閾値 (正の実数) が必要です')
 
 def verify_upload_pgns(errors, request, field, field_name):
     try: request.POST[field] in ['FALSE', 'COMPACT', 'VERBOSE']

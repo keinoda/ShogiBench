@@ -1109,6 +1109,11 @@ def client_match_runner_version_ref(request):
         'shogitest_min_version' : OPENBENCH_CONFIG['shogitest_min_version'],
         'shogitest_repo_url'    : OPENBENCH_CONFIG['shogitest_repo_url'],
         'shogitest_repo_ref'    : OPENBENCH_CONFIG['shogitest_repo_ref'],
+
+        # SPSA (rshogi ラッパー) 用。ワーカーは SPSA ワークロードを受けたときに
+        # このリポジトリから spsa バイナリをビルドする
+        'rshogi_repo_url'       : OPENBENCH_CONFIG['rshogi_repo_url'],
+        'rshogi_repo_ref'       : OPENBENCH_CONFIG['rshogi_repo_ref'],
     })
 
 @csrf_exempt
@@ -1259,6 +1264,21 @@ def client_submit_results(request, machine):
 
     # Stops requested from the /workers/ page, and revoked Worker Keys,
     # abort the current games
+    if machine.info.get('stop_requested') or OpenBench.utils.machine_key_revoked(machine):
+        response['stop'] = True
+
+    return JsonResponse(response)
+
+@csrf_exempt
+@verify_worker
+def client_submit_spsa(request, machine):
+
+    # rshogi spsa を回しているワーカーからの進捗報告。
+    # Returns {}, or { 'stop' : True }
+    response = OpenBench.utils.update_spsa_workload(request, machine)
+
+    # Stops requested from the /workers/ page, and revoked Worker Keys,
+    # abort the current tuning run (state is preserved for resume)
     if machine.info.get('stop_requested') or OpenBench.utils.machine_key_revoked(machine):
         response['stop'] = True
 
