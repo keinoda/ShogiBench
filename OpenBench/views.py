@@ -717,16 +717,20 @@ def parse_ssh_target(text):
 
     raise ValueError('Unrecognized SSH target: %s' % (text))
 
-def upload_worker_bootstrap(client, script_data):
+def upload_worker_bootstrap(client, script_data, remote_path):
+
+    ## Upload to a per-request temp path; the launch command mv's it into
+    ## place atomically. Writing /tmp/shogibench_setup.sh directly would let
+    ## a second connect truncate a script an earlier bash is still executing.
 
     try:
         with client.open_sftp() as sftp:
-            sftp.putfo(io.BytesIO(script_data), '/tmp/shogibench_setup.sh')
+            sftp.putfo(io.BytesIO(script_data), remote_path)
         return
     except Exception as sftp_error:
         try:
             stdin, stdout, stderr = client.exec_command(
-                'cat > /tmp/shogibench_setup.sh', timeout=20)
+                'cat > %s' % (remote_path), timeout=20)
             stdin.write(script_data)
             stdin.flush()
             stdin.channel.shutdown_write()
@@ -761,8 +765,9 @@ def launch_worker_over_ssh(request, pkey, worker_key, target, threads):
 
         # Upload our own copy of the bootstrap script, so nothing external is needed
         script = os.path.join(PROJECT_PATH, 'Deploy', 'worker', 'setup_worker.sh')
+        remote_tmp = '/tmp/shogibench_setup.sh.%s' % (secrets.token_hex(8))
         with open(script, 'rb') as fin:
-            upload_worker_bootstrap(client, fin.read())
+            upload_worker_bootstrap(client, fin.read(), remote_tmp)
 
         exports = {
             'OPENBENCH_SERVER'    : server_public_url(request),
@@ -781,11 +786,11 @@ def launch_worker_over_ssh(request, pkey, worker_key, target, threads):
         # descriptors pointed away from the SSH channel; otherwise the
         # long-lived worker process can hold the channel open forever.
         command = (
-            'chmod +x /tmp/shogibench_setup.sh && '
+            'mv -f %s /tmp/shogibench_setup.sh && chmod +x /tmp/shogibench_setup.sh && '
             '( export SHOGIBENCH_PROTECTED_PIDS="$$ $PPID" %s ; nohup /tmp/shogibench_setup.sh '
             '> "$HOME/shogibench-worker.log" 2>&1 < /dev/null & ) && '
             'echo LAUNCHED'
-        ) % (env_line)
+        ) % (remote_tmp, env_line)
 
         # Read a single line rather than waiting for channel EOF, so a
         # stray descriptor on the remote side can never hang this request

@@ -24,18 +24,49 @@
 #   66  worker key was disabled/deleted, or openbench.exit -> do not restart
 
 PIDFILE="$HOME/.shogibench-worker.pgid"
+BOOTLOCK="$HOME/.shogibench-boot.lock"
 
 self_pgid() {
     ps -o pgid= -p $$ 2>/dev/null | tr -d ' '
 }
 
+acquire_boot_lock() {
+
+    # 接続 POST が同時に2つ届くなどで bootstrap が並走すると、互いを
+    # 「前回の起動」と見なして殺し合う。起動処理 (前回の掃除〜pidfile 記録)
+    # を flock で直列化し、後から来た方は「既に起動中」として静かに終了する。
+    # ロックは起動処理の間だけ保持するので、時間を置いた再接続による
+    # takeover はこれまで通り機能する。保持者が死ねば自動で解放される
+    command -v flock >/dev/null 2>&1 || return 0
+    : >>"$BOOTLOCK" 2>/dev/null || return 0
+    exec 9>>"$BOOTLOCK"
+    if ! flock -n 9; then
+        echo "[setup_worker] another bootstrap is starting right now; exiting"
+        exit 0
+    fi
+}
+
+release_boot_lock() {
+    exec 9>&- 2>/dev/null || true
+}
+
+cleanup_pidfile() {
+
+    # 自分が記録した pidfile だけを消す。takeover で殺された側の EXIT トラップ
+    # が、新しい bootstrap の記録したばかりの pidfile を消してしまわないように
+    [ "$(cat "$PIDFILE" 2>/dev/null || true)" = "$$" ] && rm -f "$PIDFILE"
+    return 0
+}
+
 self_ancestors() {
 
     # 自分の祖先 PID の一覧 (sshd やログ収集シェルなど)。コマンドラインに
-    # たまたま setup_worker.sh の文字列を含む祖先を巻き込み殺さないための除外リスト
+    # たまたま setup_worker.sh の文字列を含む祖先を巻き込み殺さないための除外リスト。
+    # 以下の掃除経路の ps/cat は、対象 pid が pgrep との間に消えると失敗し得る。
+    # set -e 下で bootstrap ごと静かに死なないよう、全て `|| true` で吸収する
     local pid=$$ ppid
     while [ -n "$pid" ] && [ "$pid" != "1" ] && [ "$pid" != "0" ]; do
-        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
         [ -n "$ppid" ] || break
         echo "$ppid"
         pid="$ppid"
@@ -64,7 +95,7 @@ is_protected_group() {
     [ "$pgid" = "$(self_pgid)" ] && return 0
     for pid in $PROTECTED_PIDS; do
         [ -n "$pid" ] || continue
-        ppid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+        ppid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
         [ "$ppid" = "$pgid" ] && return 0
     done
     return 1
@@ -87,7 +118,7 @@ kill_group_or_pid() {
     # engines too); fall back to the single pid. Never touch pgid 1, our own
     # group, or a group led by one of our ancestors
     local pid="$1" pgid
-    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
 
     case "$pgid" in
         ''|*[!0-9]*) pgid="" ;;
@@ -104,13 +135,13 @@ kill_group_or_pid() {
 stop_previous_workers() {
 
     # 自分と自分の祖先は絶対に殺さない
-    PROTECTED_PIDS="$(protected_pids | tr '\n' ' ')"
+    PROTECTED_PIDS="$(protected_pids | tr '\n' ' ' || true)"
 
     # 1) Modern bootstraps record their process group here; killing the
     #    group stops the loop, its installers, the client, and any engines
     if [ -f "$PIDFILE" ]; then
         local oldpgid
-        oldpgid=$(cat "$PIDFILE" 2>/dev/null | tr -d ' ')
+        oldpgid=$(cat "$PIDFILE" 2>/dev/null | tr -d ' ' || true)
         case "$oldpgid" in
             ''|*[!0-9]*) : ;;
             1) : ;;
@@ -134,9 +165,9 @@ stop_previous_workers() {
     local cpid ppid pcomm
     for cpid in $(pgrep -f '[c]lient.py' 2>/dev/null || true); do
         is_protected_pid "$cpid" && continue
-        ppid=$(ps -o ppid= -p "$cpid" 2>/dev/null | tr -d ' ')
+        ppid=$(ps -o ppid= -p "$cpid" 2>/dev/null | tr -d ' ' || true)
         if [ -n "$ppid" ] && [ "$ppid" != "1" ] && ! is_protected_pid "$ppid"; then
-            pcomm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ')
+            pcomm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ' || true)
             case "$pcomm" in
                 bash|sh|dash) kill_group_or_pid "$ppid" ;;
             esac
@@ -246,6 +277,12 @@ if [ "$(self_pgid)" != "$$" ] && command -v setsid >/dev/null && [ -f "$0" ]; th
     exec setsid bash "$0" "$@"
 fi
 
+# Serialize the startup section: two bootstraps launched at nearly the same
+# moment (double-clicked connect button, duplicated POST) must not both run
+# the takeover below, or they treat each other as "previous" and kill each
+# other. The loser exits here; the winner proceeds alone
+acquire_boot_lock
+
 # Stop any worker started by an earlier run (or an earlier failed attempt),
 # so re-running this script never leaves two loops behind
 stop_previous_workers
@@ -256,8 +293,12 @@ echo "[setup_worker] starting bootstrap pid=$$ pgid=$(self_pgid)"
 # lead our own group; otherwise the name-based sweep still covers us
 if [ "$(self_pgid)" = "$$" ]; then
     echo "$$" > "$PIDFILE"
-    trap 'rm -f "$PIDFILE"' EXIT
+    trap cleanup_pidfile EXIT
 fi
+
+# Startup is serialized up to here. From now on a newer bootstrap may take
+# over at any time: it finds us via the pidfile or the name-based sweeps
+release_boot_lock
 
 # A single failed apt/rustup call must not abort the whole bootstrap and
 # leave nothing registered; from here we handle errors ourselves and

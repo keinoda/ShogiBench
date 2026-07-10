@@ -200,5 +200,149 @@ class SetupWorkerTakeoverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+def run_sourced(home, body, extra_env=None, timeout=30):
+
+    ## 本物のスクリプトを SOURCE_ONLY で読み込んでから body を実行する。
+    ## HOME を差し替えて PIDFILE / BOOTLOCK をテスト用ディレクトリに向ける
+    harness = 'export SHOGIBENCH_SOURCE_ONLY=1\nsource "%s"\n%s' % (SCRIPT, body)
+    env = { **os.environ, 'HOME' : home, **(extra_env or {}) }
+    return subprocess.run(['bash', '-c', harness], env=env,
+                          capture_output=True, text=True, timeout=timeout,
+                          start_new_session=True)
+
+
+@unittest.skipUnless(shutil.which('flock') and shutil.which('bash'),
+                     'requires bash and flock')
+class BootstrapStartupLockTests(unittest.TestCase):
+
+    # 接続 POST が同時に2つ届いて bootstrap が並走し、互いを「前回の起動」と
+    # 見なして殺し合った事故 (両方が0バイトログのまま死ぬ) の再発防止を検証する
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='shogibench-bootlock-')
+        self.procs = []
+
+    def tearDown(self):
+        for proc in self.procs:
+            try: os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError: pass
+            proc.poll()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def start_holder(self, body, marker):
+
+        ## acquire までを実行した bootstrap 役を起動し、marker の出力まで待つ
+        harness = 'export SHOGIBENCH_SOURCE_ONLY=1\nsource "%s"\n%s' % (SCRIPT, body)
+        proc = subprocess.Popen(
+            ['bash', '-c', harness], env={ **os.environ, 'HOME' : self.tmp },
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            start_new_session=True)
+        self.procs.append(proc)
+        line = proc.stdout.readline()
+        self.assertIn(marker, line)
+        return proc
+
+    def sleeper(self, seconds):
+        return '"%s" -c "import time; time.sleep(%d)"' % (sys.executable, seconds)
+
+    def test_second_bootstrap_exits_while_first_holds_the_lock(self):
+
+        # 1つ目がロック保持中に来た2つ目は、掃除に入らず「起動中」として即終了
+        self.start_holder('acquire_boot_lock\necho HOLDING\n%s\n' % (self.sleeper(20)),
+                          'HOLDING')
+
+        second = run_sourced(self.tmp, 'acquire_boot_lock\necho WON\n')
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotIn('WON', second.stdout)
+        self.assertIn('another bootstrap is starting', second.stdout)
+
+    def test_lock_is_released_for_later_takeover(self):
+
+        # 起動処理を終えてロックを手放した後は、稼働中でも再接続 takeover を通す
+        self.start_holder(
+            'acquire_boot_lock\nrelease_boot_lock\necho RELEASED\n%s\n'
+            % (self.sleeper(20)), 'RELEASED')
+
+        second = run_sourced(self.tmp, 'acquire_boot_lock\necho WON\n')
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn('WON', second.stdout)
+
+    def test_lock_dies_with_its_holder(self):
+
+        # 保持者が死ねば flock は自動解放され、stale ロックで詰まらない
+        first = run_sourced(self.tmp, 'acquire_boot_lock\necho WON\n')
+        self.assertIn('WON', first.stdout)
+
+        second = run_sourced(self.tmp, 'acquire_boot_lock\necho WON\n')
+        self.assertIn('WON', second.stdout)
+
+
+@unittest.skipUnless(shutil.which('pgrep') and shutil.which('bash'),
+                     'requires bash and procps')
+class TakeoverRobustnessTests(unittest.TestCase):
+
+    # 本番の掃除は `set -euo pipefail` 下で走る。pgrep で拾った pid がその直後に
+    # 消えると ps が失敗するが、それで bootstrap 全体が silent に死んではいけない
+    # (二重POST事故で双方が0バイトログのまま死んだ主因)
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='shogibench-robust-')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def dead_pid(self):
+        proc = subprocess.Popen([sys.executable, '-c', 'pass'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc.wait()
+        return proc.pid
+
+    def test_kill_group_or_pid_survives_a_vanished_pid(self):
+
+        result = run_sourced(self.tmp, (
+            'set -euo pipefail\n'
+            'PROTECTED_PIDS=""\n'
+            'kill_group_or_pid %d\n'
+            'echo SURVIVED\n'
+        ) % (self.dead_pid()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('SURVIVED', result.stdout)
+
+    def test_stop_previous_workers_survives_dead_pidfile_and_protected_pids(self):
+
+        # pidfile の pgid も SHOGIBENCH_PROTECTED_PIDS の pid も既に消えている
+        # (SSH ランチャーは起動直後に消えるのが常) 状態でも掃除は完走する
+        with open(os.path.join(self.tmp, '.shogibench-worker.pgid'), 'w') as fout:
+            fout.write(str(self.dead_pid()))
+
+        result = run_sourced(self.tmp, (
+            'set -euo pipefail\n'
+            'stop_previous_workers\n'
+            'echo SURVIVED\n'
+        ), extra_env={ 'SHOGIBENCH_PROTECTED_PIDS' : str(self.dead_pid()) })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('SURVIVED', result.stdout)
+
+    def test_cleanup_pidfile_removes_only_its_own_record(self):
+
+        pidfile = os.path.join(self.tmp, '.shogibench-worker.pgid')
+
+        # 自分の pid を記録した場合だけ消す
+        result = run_sourced(self.tmp, (
+            'echo "$$" > "$PIDFILE"\n'
+            'cleanup_pidfile\n'
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(pidfile), 'own pidfile should be removed')
+
+        # takeover された側のトラップが、新しい bootstrap の記録を消さない
+        result = run_sourced(self.tmp, (
+            'echo 99999999 > "$PIDFILE"\n'
+            'cleanup_pidfile\n'
+        ))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.exists(pidfile), 'foreign pidfile must survive')
+
+
 if __name__ == '__main__':
     unittest.main()

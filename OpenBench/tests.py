@@ -978,6 +978,10 @@ class WorkerConnectTests(TestCase):
         self.assertIn('SHOGIBENCH_PROTECTED_PIDS="$$ $PPID"', command)
         self.assertIn('shogibench_setup.sh', command)
 
+        # スクリプトは一時名にアップロードし mv で原子的に設置する (二重POSTが
+        # 実行中のスクリプトを truncate しないように)
+        self.assertIn('mv -f /tmp/shogibench_setup.sh.', command)
+
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_falls_back_to_exec_upload_when_sftp_unavailable(self, mock_ssh_client):
         connection = mock_ssh_client.return_value
@@ -1005,7 +1009,7 @@ class WorkerConnectTests(TestCase):
         self.assertEqual(connection.exec_command.call_count, 2)
 
         upload_command = connection.exec_command.call_args_list[0].args[0]
-        self.assertEqual(upload_command, 'cat > /tmp/shogibench_setup.sh')
+        self.assertRegex(upload_command, r'^cat > /tmp/shogibench_setup\.sh\.[0-9a-f]{16}$')
         upload_stdin.write.assert_called_once()
         self.assertIsInstance(upload_stdin.write.call_args.args[0], bytes)
         upload_stdin.flush.assert_called_once()
@@ -1015,6 +1019,10 @@ class WorkerConnectTests(TestCase):
         self.assertIn(self.key.token, launch_command)
         self.assertIn('SHOGIBENCH_PROTECTED_PIDS="$$ $PPID"', launch_command)
         self.assertIn('nohup /tmp/shogibench_setup.sh', launch_command)
+
+        # アップロード先の一時名と launch コマンドの mv 元が一致する
+        remote_tmp = upload_command.split(' > ', 1)[1]
+        self.assertIn('mv -f %s /tmp/shogibench_setup.sh' % (remote_tmp), launch_command)
 
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_auto_creates_worker_key(self, mock_ssh_client):
