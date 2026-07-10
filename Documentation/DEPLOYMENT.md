@@ -149,10 +149,11 @@ fly secrets set OPENBENCH_SSH_PRIVATE_KEY="$(cat ~/.ssh/id_ed25519)"
 ```
 
 - AWS / vast.ai 側に対応する公開鍵が既に入っているなら、追加の秘密鍵指定は
-  不要です。以後は SSH アドレスを貼り付けるだけで接続できます
+  不要です。vast.ai に新しく登録する場合は、`/workers/` ページに表示される
+  `ssh-ed25519 ...` / `ssh-rsa ...` 形式の公開鍵1行を貼り付けます
 - ed25519 / ECDSA / RSA に対応。**パスフレーズなしの鍵**が必要です。
 - `fly secrets set` は自動で再デプロイをトリガーします。設定済みか
-  どうかは `/workers/` ページに鍵のフィンガープリントとして表示されます
+  どうかは `/workers/` ページに公開鍵と確認用フィンガープリントとして表示されます
 - 環境変数の代わりに、ボリューム上の `/data/ssh_key` にファイルとして
   置くこともできます(`OPENBENCH_SSH_PRIVATE_KEY_FILE` で場所を変更可)
 

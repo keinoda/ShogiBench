@@ -146,8 +146,14 @@
         {% if ssh_key_configured %}
             <p>
                 サーバーのSSH鍵: <code>{{ssh_key_fingerprint}}</code><br>
-                普段使っている AWS と同じように、この鍵でSSHできる
-                インスタンスなら追加の秘密鍵指定は不要です。
+                vast.ai の Account &gt; SSH Keys には、次の公開鍵を1行ごと
+                登録してください。
+            </p>
+            <pre>{{ssh_public_key}}</pre>
+            <p>
+                普段使っている AWS と同じように、この公開鍵でSSHできる
+                インスタンスなら追加の秘密鍵指定は不要です。上の
+                <code>SHA256:</code> は確認用の指紋で、vast.ai に貼る鍵ではありません。
             </p>
         {% else %}
             <p>

@@ -693,6 +693,10 @@ def ssh_key_fingerprint(pkey):
     key_name = pkey.get_name().replace('ssh-', '').upper()
     return '%s SHA256:%s' % (key_name, base64.b64encode(digest).decode().rstrip('='))
 
+def ssh_public_key_line(pkey):
+
+    return '%s %s' % (pkey.get_name(), pkey.get_base64())
+
 def parse_ssh_target(text):
 
     ## Accepts any of the formats vast.ai and users commonly paste:
@@ -918,6 +922,7 @@ def workers(request):
         'server_url' : server_public_url(request),
         'ssh_key_configured'  : server_key is not None,
         'ssh_key_fingerprint' : ssh_key_fingerprint(server_key) if server_key else '',
+        'ssh_public_key'      : ssh_public_key_line(server_key) if server_key else '',
     }
 
     return render(request, 'workers.html', data)

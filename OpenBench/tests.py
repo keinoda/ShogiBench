@@ -947,10 +947,12 @@ class WorkerConnectTests(TestCase):
             response = self.client.get('/workers/')
         self.assertContains(response, 'OPENBENCH_SSH_PRIVATE_KEY')
 
-    def test_page_shows_fingerprint_with_key(self):
+    def test_page_shows_public_key_and_fingerprint_with_key(self):
         with override_settings(SSH_PRIVATE_KEY=test_ssh_key()):
             response = self.client.get('/workers/')
         self.assertContains(response, 'SHA256:')
+        self.assertContains(response, 'ssh-rsa')
+        self.assertContains(response, 'vast.ai に貼る鍵ではありません')
 
     @patch('OpenBench.views.paramiko.SSHClient')
     def test_connect_launches_worker(self, mock_ssh_client):
