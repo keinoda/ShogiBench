@@ -246,6 +246,8 @@ clang_major() {
 }
 
 cxx_stdlib_ready() {
+
+    # C++ 標準ヘッダが引けるか (コンパイルのみの軽い検査)
     local cxx="${1:-clang++}" out rc
     command -v "$cxx" >/dev/null || return 1
 
@@ -258,6 +260,75 @@ cxx_stdlib_ready() {
     fi
     rm -f "$out" 2>/dev/null || true
     return "$rc"
+}
+
+cxx_smoke_test() {
+
+    # エンジンと同じ形 (C++17 + -fuse-ld=lld) の最小プログラムが実際に
+    # ビルドできるかの総合検査。ヘッダ (cxx_stdlib_ready) に加えて、
+    # 無印の ld.lld が無い環境のリンク失敗も検出する
+    command -v clang++ >/dev/null 2>&1 || return 1
+    local out
+    out=$(mktemp /tmp/shogibench-cxx-smoke.XXXXXX) || return 1
+    if printf '#include <cstddef>\n#include <iostream>\nint main() { std::cout << ""; return 0; }\n' \
+            | clang++ -std=c++17 -fuse-ld=lld -x c++ - -o "$out" 2>/dev/null; then
+        rm -f "$out"
+        return 0
+    fi
+    rm -f "$out"
+    return 1
+}
+
+newest_system_gcc_major() {
+
+    # clang は /usr/lib/gcc 配下で最も新しい GCC ディレクトリの C++ ヘッダを
+    # 選ぶ。その最大メジャー番号を返す (見つからなければ空)
+    local root="${1:-/usr/lib/gcc}" dir ver best=""
+    for dir in "$root"/*/*/; do
+        [ -d "$dir" ] || continue
+        ver=$(basename "$dir")
+        case "$ver" in ''|*[!0-9.]*) continue ;; esac
+        ver=${ver%%.*}
+        if [ -z "$best" ] || [ "$ver" -gt "$best" ]; then
+            best="$ver"
+        fi
+    done
+    echo "$best"
+}
+
+install_cxx_stdlib() {
+
+    # apt.llvm.org の clang は最新の GCC ディレクトリを選ぶが、そのバージョンの
+    # libstdc++-N-dev が無いと C++ 標準ヘッダを一切見つけられない ('cstddef'
+    # file not found が全ファイルで出る)。gcc-14 のランタイムだけが載った
+    # Ubuntu 24.04 などで頻発するため、最大版に合わせて開発ヘッダを入れる。
+    # だめなら g++-N、最後に素の g++ と、入る形を順に試す
+    local root="${1:-/usr/lib/gcc}" major
+    major=$(newest_system_gcc_major "$root")
+    ${SUDO:-} apt-get update -y || true
+    if [ -n "$major" ]; then
+        echo "[setup_worker] installing libstdc++-${major}-dev to match the newest system GCC"
+        ${SUDO:-} apt-get install -y --no-install-recommends "libstdc++-${major}-dev" \
+            || ${SUDO:-} apt-get install -y --no-install-recommends "g++-${major}" \
+            || ${SUDO:-} apt-get install -y --no-install-recommends g++ \
+            || true
+    else
+        ${SUDO:-} apt-get install -y --no-install-recommends g++ || true
+    fi
+}
+
+ensure_lld() {
+
+    # エンジンのリンクは -fuse-ld=lld を使う。apt.llvm.org はバージョン付きの
+    # ld.lld-N しか置かないので、無印の ld.lld を /usr/local/bin に用意する
+    command -v ld.lld >/dev/null 2>&1 && return 0
+    local cand
+    cand=$(ls -1 /usr/bin/ld.lld-* /usr/lib/llvm-*/bin/ld.lld 2>/dev/null | sort -V | tail -1 || true)
+    if [ -n "$cand" ] && [ -x "$cand" ]; then
+        ${SUDO:-} ln -sf "$cand" /usr/local/bin/ld.lld
+        return 0
+    fi
+    ${SUDO:-} apt-get install -y --no-install-recommends lld || true
 }
 
 install_toolchain() {
@@ -290,10 +361,17 @@ install_toolchain() {
         [ -x "$(command -v clang-18)"   ] && $SUDO ln -sf "$(command -v clang-18)"   /usr/local/bin/clang
     fi
 
-    if ! cxx_stdlib_ready clang++; then
-        echo "[setup_worker] clang++ cannot include C++ standard library headers, installing g++"
-        $SUDO apt-get update -y
-        $SUDO apt-get install -y --no-install-recommends g++
+    # 無印の ld.lld を確実に用意する (エンジンは -fuse-ld=lld でリンクする)
+    ensure_lld
+
+    # clang があっても C++ 標準ヘッダが引けない環境は、実際に1本コンパイル
+    # してみるまで分からない。失敗したら原因を出力し、最新 GCC に対応する
+    # libstdc++-N-dev を入れて自己修復する
+    if command -v clang++ >/dev/null && ! cxx_stdlib_ready clang++; then
+        echo "[setup_worker] clang++ cannot include C++ standard library headers; repairing"
+        printf '#include <cstddef>\nint main() { return 0; }\n' \
+            | clang++ -std=c++17 -x c++ -c - -o /dev/null 2>&1 | head -3 || true
+        install_cxx_stdlib
     fi
 
     # Rust toolchain, required to build the shogitest match runner. Distro
@@ -315,6 +393,7 @@ toolchain_ready() {
                                 || { echo "C++ compiler missing"; return 1; }
     [ "$(clang_major)" -ge 16 ] || { echo "clang++ >= 16 missing (engines need it)"; return 1; }
     cxx_stdlib_ready clang++ || { echo "clang++ C++ standard library headers missing"; return 1; }
+    cxx_smoke_test || { echo "clang++ cannot link C++17 (ld.lld missing?)"; return 1; }
     return 0
 }
 

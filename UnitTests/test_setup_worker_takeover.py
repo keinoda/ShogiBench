@@ -332,6 +332,67 @@ class ToolchainProbeTests(unittest.TestCase):
         self.assertIn('MISSING', result.stdout)
 
 
+@unittest.skipUnless(shutil.which('bash'), 'requires bash')
+class ToolchainRemediationTests(unittest.TestCase):
+
+    # 「clang はあるのに C++ 標準ヘッダが引けない」環境 (最新 GCC の
+    # libstdc++-N-dev 欠如。'cstddef' file not found が全ファイルで出る)
+    # の検出と自己修復を検証する
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='shogibench-toolchain-')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def make_gcc_tree(self, versions):
+        root = os.path.join(self.tmp, 'gcc')
+        for ver in versions:
+            os.makedirs(os.path.join(root, 'x86_64-linux-gnu', ver), exist_ok=True)
+        return root
+
+    def test_newest_gcc_major_is_detected(self):
+
+        root = self.make_gcc_tree(['9', '13', '14.2.0', 'not-a-version'])
+        result = run_sourced(self.tmp, 'newest_system_gcc_major "%s"\n' % (root))
+        self.assertEqual(result.stdout.strip(), '14', result.stderr)
+
+    def test_newest_gcc_major_empty_when_no_tree(self):
+
+        result = run_sourced(self.tmp, 'newest_system_gcc_major "%s/nope"\n' % (self.tmp))
+        self.assertEqual(result.stdout.strip(), '', result.stderr)
+
+    def test_stdlib_repair_installs_headers_for_newest_gcc(self):
+
+        # SUDO=echo で apt を空撃ちし、最大版に対応する libstdc++-N-dev を
+        # 入れようとすることを確認する
+        root = self.make_gcc_tree(['12', '14'])
+        result = run_sourced(self.tmp, (
+            'SUDO=echo\n'
+            'install_cxx_stdlib "%s"\n'
+        ) % (root))
+        self.assertIn('libstdc++-14-dev', result.stdout, result.stderr)
+
+    def test_cxx_smoke_test_reflects_compiler_result(self):
+
+        # コンパイラの成否がそのまま判定になる (プラミングの確認)
+        fakebin = os.path.join(self.tmp, 'bin')
+        os.makedirs(fakebin)
+        stub = os.path.join(fakebin, 'clang++')
+
+        with open(stub, 'w') as fout:
+            fout.write('#!/bin/bash\nexit 0\n')
+        os.chmod(stub, 0o755)
+        ok = run_sourced(self.tmp, 'PATH="%s:$PATH"\ncxx_smoke_test && echo SMOKE_OK\n' % (fakebin))
+        self.assertIn('SMOKE_OK', ok.stdout, ok.stderr)
+
+        with open(stub, 'w') as fout:
+            fout.write('#!/bin/bash\nexit 1\n')
+        os.chmod(stub, 0o755)
+        bad = run_sourced(self.tmp, 'PATH="%s:$PATH"\ncxx_smoke_test || echo SMOKE_FAILED\n' % (fakebin))
+        self.assertIn('SMOKE_FAILED', bad.stdout, bad.stderr)
+
+
 @unittest.skipUnless(shutil.which('flock') and shutil.which('bash'),
                      'requires bash and flock')
 class BootstrapStartupLockTests(unittest.TestCase):

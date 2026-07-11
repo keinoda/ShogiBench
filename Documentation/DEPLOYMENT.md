@@ -291,6 +291,27 @@ nohup bash /tmp/shogibench_setup.sh > ~/shogibench-worker.log 2>&1 &
 インスタンスを破棄すればワーカーは消えます。サーバー側の後始末は不要です
 (マシン一覧は最近アクティブなものだけが表示されます)。
 
+### 3-7. ワーカー環境のトラブルシュート
+
+setup_worker.sh はツールチェインの欠けを検出して自己修復します。過去に
+実際に踏んだものは全て自動化済みです:
+
+- **clang++ が古い / 無い** → apt.llvm.org から clang-18 を導入し、
+  無印の `clang++` / `clang` / `ld.lld` を `/usr/local/bin` に用意
+- **全ファイルで `'cstddef' file not found`** → clang はシステム最新の
+  GCC ディレクトリのヘッダを使うため、そのバージョンの `libstdc++-N-dev`
+  が無い環境 (gcc-14 のランタイムだけ載った Ubuntu 24.04 等) で起こります。
+  実際に C++17 の最小プログラムをビルドして検出し、`libstdc++-N-dev` を
+  自動導入します
+- **python / python3 の違い** → `python-is-python3` を導入
+- **cargo が無い / 古い** → rustup で導入し PATH を通す
+- 上記の確認 (toolchain_ready) が通るまで 15 秒間隔でリトライし続けるので、
+  一時的な apt ミラー障害も自己回復します
+
+これらは接続時に配布されるスクリプトの機能なので、**古いインスタンスで
+踏んだ場合は `/workers/` から再接続**して新しいスクリプトに置き換えて
+ください。ログは `~/shogibench-worker.log` に出ます。
+
 ---
 
 ## 4. セキュリティ上の注意
