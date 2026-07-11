@@ -245,6 +245,21 @@ clang_major() {
     clang++ --version | grep -oE 'version [0-9]+' | grep -oE '[0-9]+' | head -1
 }
 
+cxx_stdlib_ready() {
+    local cxx="${1:-clang++}" out rc
+    command -v "$cxx" >/dev/null || return 1
+
+    out="${TMPDIR:-/tmp}/shogibench-cxx-stdlib-check-$$.o"
+    if printf '#include <cstddef>\nint main() { return 0; }\n' \
+            | "$cxx" -std=c++17 -x c++ -c -o "$out" - >/dev/null 2>&1; then
+        rc=0
+    else
+        rc=1
+    fi
+    rm -f "$out" 2>/dev/null || true
+    return "$rc"
+}
+
 install_toolchain() {
 
     # Install only the packages that are missing
@@ -275,6 +290,12 @@ install_toolchain() {
         [ -x "$(command -v clang-18)"   ] && $SUDO ln -sf "$(command -v clang-18)"   /usr/local/bin/clang
     fi
 
+    if ! cxx_stdlib_ready clang++; then
+        echo "[setup_worker] clang++ cannot include C++ standard library headers, installing g++"
+        $SUDO apt-get update -y
+        $SUDO apt-get install -y --no-install-recommends g++
+    fi
+
     # Rust toolchain, required to build the shogitest match runner. Distro
     # packages are often too old, so install via rustup when missing.
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
@@ -293,6 +314,7 @@ toolchain_ready() {
     { command -v g++ >/dev/null || command -v clang++ >/dev/null; } \
                                 || { echo "C++ compiler missing"; return 1; }
     [ "$(clang_major)" -ge 16 ] || { echo "clang++ >= 16 missing (engines need it)"; return 1; }
+    cxx_stdlib_ready clang++ || { echo "clang++ C++ standard library headers missing"; return 1; }
     return 0
 }
 

@@ -277,6 +277,61 @@ def run_sourced(home, body, extra_env=None, timeout=30):
                           start_new_session=True)
 
 
+class ToolchainProbeTests(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='shogibench-toolchain-')
+        self.bin = os.path.join(self.tmp, 'bin')
+        os.mkdir(self.bin)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def write_compiler(self, body):
+        path = os.path.join(self.bin, 'clang++')
+        with open(path, 'w') as fout:
+            fout.write('#!/bin/sh\n' + body)
+        os.chmod(path, 0o755)
+
+    def run_probe(self):
+        env = {
+            'PATH'   : self.bin + os.pathsep + os.environ['PATH'],
+            'TMPDIR' : self.tmp,
+        }
+        return run_sourced(
+            self.tmp,
+            'if cxx_stdlib_ready clang++; then echo READY; else echo MISSING; fi\n',
+            extra_env=env)
+
+    def test_cxx_stdlib_probe_accepts_working_compiler(self):
+
+        # -o の出力先を作れる compiler なら標準ヘッダ検査は成功する
+        self.write_compiler(
+            'out=""\n'
+            'while [ "$#" -gt 0 ]; do\n'
+            '  if [ "$1" = "-o" ]; then shift; out="$1"; fi\n'
+            '  shift || true\n'
+            'done\n'
+            'cat >/dev/null\n'
+            '[ -n "$out" ] && : > "$out"\n')
+
+        result = self.run_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('READY', result.stdout)
+
+    def test_cxx_stdlib_probe_rejects_missing_headers(self):
+
+        # Vast.ai 側で見えた cstddef 欠落のような compiler は起動前に検出する
+        self.write_compiler(
+            'cat >/dev/null\n'
+            'echo "fatal error: cstddef file not found" >&2\n'
+            'exit 1\n')
+
+        result = self.run_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('MISSING', result.stdout)
+
+
 @unittest.skipUnless(shutil.which('flock') and shutil.which('bash'),
                      'requires bash and flock')
 class BootstrapStartupLockTests(unittest.TestCase):
