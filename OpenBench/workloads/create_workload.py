@@ -152,6 +152,7 @@ def create_new_test(request):
     test.dev_options       = request.POST['dev_options']
     test.dev_network       = request.POST['dev_network']
     test.dev_time_control  = OpenBench.utils.TimeControl.parse(request.POST['dev_time_control'])
+    test.dev_ponder_mode   = request.POST.get('dev_ponder_mode', Test.PonderMode.OFF)
 
     test.dev_build_name, test.dev_build_args = resolve_build_variant(request, 'dev_engine', 'dev_build')
 
@@ -162,6 +163,7 @@ def create_new_test(request):
     test.base_options      = request.POST['base_options']
     test.base_network      = request.POST['base_network']
     test.base_time_control = OpenBench.utils.TimeControl.parse(request.POST['base_time_control'])
+    test.base_ponder_mode  = request.POST.get('base_ponder_mode', Test.PonderMode.OFF)
 
     test.base_build_name, test.base_build_args = resolve_build_variant(request, 'base_engine', 'base_build')
 

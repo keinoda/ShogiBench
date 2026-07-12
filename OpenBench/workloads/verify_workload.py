@@ -114,6 +114,7 @@ def verify_test_creation(errors, request):
         (verify_options        , 'dev_options', 'Threads', 'Dev Options'),
         (verify_options        , 'dev_options', 'Hash', 'Dev Options'),
         (verify_time_control   , 'dev_time_control', 'Dev Time Control'),
+        (verify_ponder_mode    , 'dev_ponder_mode', 'Dev Ponder', 'dev_time_control'),
 
         # Verify everything about the Base Engine
         (verify_configuration  , 'base_engine', 'Base Engine', 'engines'),
@@ -123,6 +124,7 @@ def verify_test_creation(errors, request):
         (verify_options        , 'base_options', 'Threads', 'Base Options'),
         (verify_options        , 'base_options', 'Hash', 'Base Options'),
         (verify_time_control   , 'base_time_control', 'Base Time Control'),
+        (verify_ponder_mode    , 'base_ponder_mode', 'Base Ponder', 'base_time_control'),
 
         # Verify everything about the Test Settings
         (verify_configuration  , 'book_name', 'Book', 'books'),
@@ -284,6 +286,28 @@ def verify_configuration(errors, request, field, field_name, parent):
 def verify_time_control(errors, request, field, field_name):
     try: OpenBench.utils.TimeControl.parse(request.POST[field])
     except: errors.append('{0} is not parsable'.format(field_name))
+
+def verify_ponder_mode(errors, request, field, field_name, time_control_field):
+
+    mode = request.POST.get(field, Test.PonderMode.OFF)
+    if mode not in Test.PonderMode.values:
+        errors.append('%s must be off, standard, or early' % field_name)
+        return
+
+    # 時計なし go ponder を使う早期Ponderは、ponderhit時に再設定できる
+    # 時計情報が必要。ノード・深さ固定ではshogitestが起動時に拒否する。
+    if mode != Test.PonderMode.EARLY:
+        return
+
+    try:
+        control = OpenBench.utils.TimeControl.parse(request.POST[time_control_field])
+        control_type = OpenBench.utils.TimeControl.control_type(control)
+    except:
+        return # 持ち時間自体のエラーは verify_time_control() が報告する
+
+    allowed = [OpenBench.utils.TimeControl.FIXED_TIME, OpenBench.utils.TimeControl.FISCHER]
+    if control_type not in allowed:
+        errors.append('%s early mode requires Fischer or move-time control' % field_name)
 
 def verify_win_adj(errors, request, field):
     try:

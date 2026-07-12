@@ -62,7 +62,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 57 # Client version to send to the Server
+CLIENT_VERSION   = 58 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -691,6 +691,14 @@ class MatchRunner:
         name    = command.replace('.exe', '')
         proto   = ["uci", "usi"][MatchRunner.is_shogi(config)]
         control = scale_time_control(config.workload, scale_factor, branch)
+        ponder  = ''
+
+        # ponder= は shogitest 固有のエンジン設定。fastchessへは渡さない。
+        if MatchRunner.is_shogi(config):
+            ponder_mode = config.workload['test'][branch].get('ponder_mode', 'off')
+            if ponder_mode not in ['off', 'standard', 'early']:
+                raise ValueError('Unknown Ponder mode for %s: %s' % (branch, ponder_mode))
+            ponder = ' ponder=%s' % ponder_mode
 
         # Private engines, when using Networks, must set them via UCI
         if private and network and network != 'None':
@@ -728,7 +736,8 @@ class MatchRunner:
 
         # Join options together in format expected by match runner
         options = ' option.'.join([''] + re.findall(r'"[^"]*"|\S+', options))
-        return '-engine dir=Engines/ cmd=./%s proto=%s %s%s name=%s-%s' % (command, proto, control, options, engine, branch)
+        return '-engine dir=Engines/ cmd=./%s proto=%s %s%s%s name=%s-%s' % (
+            command, proto, control, ponder, options, engine, branch)
 
     @staticmethod
     def pgnout_settings(config, timestamp, runner_idx):

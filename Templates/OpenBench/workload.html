@@ -28,6 +28,9 @@
             {% endif %}
             <tr><td class="td-label">{{dev_text}} オプション</td><td class="engine-options">{{workload.dev_options}}</td></tr>
             <tr><td class="td-label">{{dev_text}} 持ち時間</td><td>{{workload.dev_time_control}}</td></tr>
+            {% if type == "TEST" %}
+                <tr><td class="td-label">{{dev_text}} Ponder方式</td><td>{{workload.get_dev_ponder_mode_display}}</td></tr>
+            {% endif %}
 
             <!-- All of the Base Engine information, which only exists for TESTs -->
             {% if type == "TEST" or type == "DATAGEN" %}
@@ -41,6 +44,9 @@
                 {% endif %}
                 <tr><td class="td-label">Base オプション</td><td class="engine-options">{{workload.base_options}}</td></tr>
                 <tr><td class="td-label">Base 持ち時間</td><td>{{workload.base_time_control}}</td></tr>
+                {% if type == "TEST" %}
+                    <tr><td class="td-label">Base Ponder方式</td><td>{{workload.get_base_ponder_mode_display}}</td></tr>
+                {% endif %}
             {% endif %}
 
             {% if workload|book_download_link %}

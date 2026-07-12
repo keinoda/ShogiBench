@@ -187,6 +187,11 @@ class Test(Model):
         BASE = 'BASE', 'BASE'
         BOTH = 'BOTH', 'BOTH'
 
+    class PonderMode(TextChoices):
+        OFF      = 'off',      '無効'
+        STANDARD = 'standard', '通常 Ponder'
+        EARLY    = 'early',    '早期 Ponder'
+
     # Misc information
     author      = CharField(max_length=64)
     upload_pgns = CharField(max_length=16, default='FALSE')
@@ -203,6 +208,7 @@ class Test(Model):
     dev_network      = CharField(max_length=256, blank=True)
     dev_netname      = CharField(max_length=256, blank=True)
     dev_time_control = CharField(max_length=32)
+    dev_ponder_mode  = CharField(max_length=16, choices=PonderMode.choices, default=PonderMode.OFF)
     dev_build_name   = CharField(max_length=64,  default='default')
     dev_build_args   = CharField(max_length=512, blank=True, default='')
 
@@ -218,6 +224,7 @@ class Test(Model):
     base_network      = CharField(max_length=256, blank=True)
     base_netname      = CharField(max_length=256, blank=True)
     base_time_control = CharField(max_length=32)
+    base_ponder_mode  = CharField(max_length=16, choices=PonderMode.choices, default=PonderMode.OFF)
     base_build_name   = CharField(max_length=64,  default='default')
     base_build_args   = CharField(max_length=512, blank=True, default='')
     base_display      = CharField(max_length=64, blank=True, default='')

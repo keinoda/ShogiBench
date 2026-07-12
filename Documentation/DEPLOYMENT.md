@@ -498,11 +498,12 @@ dlshogi系が「持ち時間400秒+2秒加算」など。ShogiBench のプリセ
 
 ## 9. shogitest フォーク(keinoda/shogitest)
 
-対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.2)。
+対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.3)。
 本家からの主な変更:
 
 - **成績表示を先頭エンジン(=Dev)基準に修正**: 従来は「A vs B」と表示しつつ
   Elo/勝敗がB基準で計算されており、直感と逆でした
 - ヘッダーに `(score for A)` と基準を明示
 - `tc=inf` を許容(固定ノード指定の互換性)
+- エンジンごとに通常Ponder・早期Ponder・無効を選択可能
 - 警告・エラー出力の改行修正

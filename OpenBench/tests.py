@@ -18,6 +18,7 @@
 #                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
@@ -33,6 +34,7 @@ from django.test import override_settings
 from OpenBench.models import BuildVariant, Engine, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
+from OpenBench.workloads.get_workload import workload_to_dictionary
 from OpenBench.workloads.verify_workload import collect_github_info
 
 TEST_SSH_KEY = None
@@ -919,6 +921,122 @@ class BuildVariantPageTests(TestCase):
         self.assertContains(response, 'mine')
         self.assertContains(response, 'default')
         self.assertNotContains(response, 'NNUE-KP256')
+
+class PonderModeWorkloadTests(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user('alice', 'a@example.com', 'account-password')
+        Profile.objects.create(user=self.user, enabled=True, approver=True)
+        self.client.login(username='alice', password='account-password')
+
+    def test_form_exposes_modes_for_both_engines(self):
+        response = self.client.get('/test/new/')
+
+        self.assertContains(response, 'name="dev_ponder_mode"')
+        self.assertContains(response, 'name="base_ponder_mode"')
+        self.assertContains(response, 'value="standard"')
+        self.assertContains(response, 'value="early"')
+
+    def test_modes_are_saved_displayed_and_sent_to_worker(self):
+        response = self.create_test()
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/index/', response.url)
+
+        test = Test.objects.get(test_mode='GAMES')
+        self.assertEqual(test.dev_ponder_mode, Test.PonderMode.STANDARD)
+        self.assertEqual(test.base_ponder_mode, Test.PonderMode.EARLY)
+
+        distribution = {
+            'runner-count'     : 1,
+            'concurrency-per'  : 1,
+            'games-per-runner' : 2,
+        }
+        with patch('OpenBench.workloads.get_workload.game_distribution', return_value=distribution):
+            workload = workload_to_dictionary(test, SimpleNamespace(id=7), None)
+
+        self.assertEqual(workload['test']['dev']['ponder_mode'], 'standard')
+        self.assertEqual(workload['test']['base']['ponder_mode'], 'early')
+
+        detail = self.client.get('/test/%d/' % test.id)
+        self.assertContains(detail, 'Dev Ponder方式')
+        self.assertContains(detail, '通常 Ponder')
+        self.assertContains(detail, 'Base Ponder方式')
+        self.assertContains(detail, '早期 Ponder')
+
+    def test_invalid_mode_is_rejected(self):
+        response = self.create_test(dev_ponder_mode='unexpected')
+        self.assertIn('/test/new/', response.url)
+        self.assertFalse(Test.objects.exists())
+
+    def test_early_mode_rejects_clockless_time_control(self):
+        response = self.create_test(dev_ponder_mode='early', dev_time_control='N=1000')
+        self.assertIn('/test/new/', response.url)
+        self.assertFalse(Test.objects.exists())
+
+    def test_missing_modes_keep_existing_off_behavior(self):
+        form = self.test_form()
+        del form['dev_ponder_mode']
+        del form['base_ponder_mode']
+
+        response = self.post_test(form)
+        self.assertEqual(response.status_code, 302)
+
+        test = Test.objects.get(test_mode='GAMES')
+        self.assertEqual(test.dev_ponder_mode, Test.PonderMode.OFF)
+        self.assertEqual(test.base_ponder_mode, Test.PonderMode.OFF)
+
+    def test_form(self, **overrides):
+        form = {
+            'dev_engine'         : 'YaneuraOu-nagisa',
+            'dev_repo'           : 'https://github.com/keinoda/YaneuraOu',
+            'dev_branch'         : 'master',
+            'dev_bench'          : '',
+            'dev_network'        : '',
+            'dev_build'          : 'default',
+            'dev_options'        : 'Threads=1 Hash=16',
+            'dev_time_control'   : '10+0.1',
+            'dev_ponder_mode'    : 'standard',
+            'base_engine'        : 'YaneuraOu-nagisa',
+            'base_repo'          : 'https://github.com/keinoda/YaneuraOu',
+            'base_branch'        : 'master',
+            'base_bench'         : '',
+            'base_network'       : '',
+            'base_build'         : 'default',
+            'base_options'       : 'Threads=1 Hash=16',
+            'base_time_control'  : '10+0.1',
+            'base_ponder_mode'   : 'early',
+            'book_name'          : 'yaneuraou2025_ply24_shogi_sfen.epd',
+            'upload_pgns'        : 'FALSE',
+            'test_mode'          : 'GAMES',
+            'test_bounds'        : 'N/A',
+            'test_confidence'    : 'N/A',
+            'test_max_games'     : '2',
+            'priority'           : '0',
+            'throughput'         : '1000',
+            'workload_size'      : '1',
+            'scale_method'       : 'BASE',
+            'scale_nps'          : '1000000',
+            'syzygy_wdl'         : 'DISABLED',
+            'syzygy_adj'         : 'DISABLED',
+            'win_adj'            : 'None',
+            'draw_adj'           : 'None',
+        }
+        form.update(overrides)
+        return form
+
+    def post_test(self, form):
+        github_info = (
+            'https://github.com/keinoda/YaneuraOu/archive/' + 'b' * 40 + '.zip',
+            'master',
+            'a' * 40,
+            0,
+        )
+        with patch('OpenBench.workloads.verify_workload.collect_github_info',
+                   return_value=(github_info, True)):
+            return self.client.post('/test/new/', form)
+
+    def create_test(self, **overrides):
+        return self.post_test(self.test_form(**overrides))
 
 class StatBlockTests(TestCase):
 

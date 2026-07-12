@@ -90,6 +90,16 @@
                 <div class="row">
                     <label for="dev_time_control"> {{dev_text}} 持ち時間 </label> <input id="dev_time_control" name="dev_time_control">
                 </div>
+                {% if workload == "TEST" %}
+                    <div class="row">
+                        <label for="dev_ponder_mode" title="通常は時計付き go ponder、早期は時計なし go ponder と時計付き ponderhit を使用"> {{dev_text}} Ponder方式 </label>
+                        <select id="dev_ponder_mode" name="dev_ponder_mode">
+                            <option selected value="off"> 無効 </option>
+                            <option value="standard"> 通常 Ponder </option>
+                            <option value="early"> 早期 Ponder </option>
+                        </select>
+                    </div>
+                {% endif %}
 
                 {% if workload == "TEST" or workload == "DATAGEN" %}
 
@@ -121,6 +131,16 @@
                     <div class="row">
                         <label for="base_time_control" > Base 持ち時間 </label> <input id="base_time_control" name="base_time_control">
                     </div>
+                    {% if workload == "TEST" %}
+                        <div class="row">
+                            <label for="base_ponder_mode" title="通常は時計付き go ponder、早期は時計なし go ponder と時計付き ponderhit を使用"> Base Ponder方式 </label>
+                            <select id="base_ponder_mode" name="base_ponder_mode">
+                                <option selected value="off"> 無効 </option>
+                                <option value="standard"> 通常 Ponder </option>
+                                <option value="early"> 早期 Ponder </option>
+                            </select>
+                        </div>
+                    {% endif %}
 
                 {% elif workload == "TUNE" %}
 

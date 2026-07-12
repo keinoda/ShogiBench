@@ -89,6 +89,63 @@ class MatchRunnerOutputTests(unittest.TestCase):
         self.assertEqual(results['games'], {})
 
 
+class MatchRunnerPonderModeTests(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.worker = import_worker()
+
+    def config(self, book_name, ponder_mode):
+        engine = {
+            'options'           : 'Threads=1 Hash=16',
+            'network'           : '',
+            'network_aux_files' : [],
+            'private'           : False,
+            'engine'            : 'YaneuraOu',
+            'time_control'      : '10.0+0.10',
+            'ponder_mode'       : ponder_mode,
+            'build'             : {},
+        }
+        return types.SimpleNamespace(
+            workload={
+                'test' : {
+                    'book'       : { 'name' : book_name },
+                    'type'       : 'GAMES',
+                    'syzygy_wdl' : 'DISABLED',
+                    'dev'        : engine,
+                },
+            },
+            syzygy_max=0,
+            syzygy_path='',
+        )
+
+    def test_shogitest_receives_selected_mode(self):
+        config = self.config('openings_shogi_sfen.epd', 'early')
+        command = self.worker.MatchRunner.engine_settings(config, 'engine', 'dev', 1.0, 0)
+
+        self.assertIn('proto=usi', command)
+        self.assertIn(' ponder=early ', command)
+
+    def test_missing_mode_defaults_to_off(self):
+        config = self.config('openings_shogi_sfen.epd', 'off')
+        del config.workload['test']['dev']['ponder_mode']
+        command = self.worker.MatchRunner.engine_settings(config, 'engine', 'dev', 1.0, 0)
+
+        self.assertIn(' ponder=off ', command)
+
+    def test_fastchess_does_not_receive_shogitest_option(self):
+        config = self.config('openings.epd', 'early')
+        command = self.worker.MatchRunner.engine_settings(config, 'engine', 'dev', 1.0, 0)
+
+        self.assertIn('proto=uci', command)
+        self.assertNotIn('ponder=', command)
+
+    def test_unknown_mode_is_rejected(self):
+        config = self.config('openings_shogi_sfen.epd', 'unexpected')
+        with self.assertRaisesRegex(ValueError, 'Unknown Ponder mode'):
+            self.worker.MatchRunner.engine_settings(config, 'engine', 'dev', 1.0, 0)
+
+
 class StageNetworkOptionsTests(unittest.TestCase):
 
     @classmethod
