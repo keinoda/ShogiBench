@@ -34,7 +34,7 @@ from django.test import override_settings
 from OpenBench.models import BuildVariant, Engine, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
-from OpenBench.workloads.get_workload import workload_to_dictionary
+from OpenBench.workloads.get_workload import game_distribution, valid_hardware_assignment, workload_to_dictionary
 from OpenBench.workloads.verify_workload import collect_github_info
 
 TEST_SSH_KEY = None
@@ -1057,6 +1057,72 @@ class PonderModeWorkloadTests(TestCase):
         self.assertContains(detail, 'Base Ponder方式')
         self.assertContains(detail, '早期 Ponder')
 
+    def test_ponder_distribution_reserves_both_engines_on_physical_cores(self):
+        self.create_test()
+        test = Test.objects.get(test_mode='GAMES')
+        machine = SimpleNamespace(info={
+            'concurrency'    : 16,
+            'physical_cores' : 8,
+            'hard_cpu_affinity': True,
+            'sockets'        : 2,
+            'os_name'        : 'Linux',
+        })
+
+        distribution = game_distribution(test, machine)
+
+        self.assertEqual(distribution['threads-per-game'], 2)
+        self.assertEqual(distribution['concurrency-per'], 4)
+        self.assertEqual(distribution['runner-count'], 1)
+        self.assertTrue(distribution['cpu-affinity'])
+
+    def test_non_ponder_distribution_keeps_the_existing_max_thread_budget(self):
+        self.create_test(dev_ponder_mode='off', base_ponder_mode='off')
+        test = Test.objects.get(test_mode='GAMES')
+        machine = SimpleNamespace(info={
+            'concurrency'    : 8,
+            'physical_cores' : 8,
+            'hard_cpu_affinity': True,
+            'sockets'        : 1,
+            'os_name'        : 'Linux',
+        })
+
+        distribution = game_distribution(test, machine)
+
+        self.assertEqual(distribution['threads-per-game'], 1)
+        self.assertEqual(distribution['concurrency-per'], 8)
+        self.assertFalse(distribution['cpu-affinity'])
+
+    def test_ponder_distribution_sums_unequal_engine_thread_counts(self):
+        self.create_test(
+            dev_options='Threads=2 Hash=16',
+            base_options='Threads=1 Hash=16')
+        test = Test.objects.get(test_mode='GAMES')
+        machine = SimpleNamespace(info={
+            'concurrency'      : 12,
+            'physical_cores'   : 12,
+            'hard_cpu_affinity': True,
+            'sockets'          : 1,
+            'os_name'          : 'Linux',
+        })
+
+        distribution = game_distribution(test, machine)
+
+        self.assertEqual(distribution['threads-per-game'], 3)
+        self.assertEqual(distribution['concurrency-per'], 4)
+
+    def test_ponder_work_is_not_assigned_without_linux_hard_affinity(self):
+        self.create_test()
+        test = Test.objects.get(test_mode='GAMES')
+        machine = SimpleNamespace(info={
+            'concurrency'    : 8,
+            'physical_cores' : 8,
+            'hard_cpu_affinity': False,
+            'sockets'        : 1,
+            'os_name'        : 'Linux',
+        })
+
+        self.assertFalse(valid_hardware_assignment(test, machine))
+
     def test_invalid_mode_is_rejected(self):
         response = self.create_test(dev_ponder_mode='unexpected')
         self.assertIn('/test/new/', response.url)
@@ -1451,6 +1517,7 @@ class SpsaRshogiLifecycleTests(TestCase):
         return Machine.objects.create(user=self.alice, secret='s3cret', info={
             'concurrency'    : threads,
             'physical_cores' : threads,
+            'hard_cpu_affinity': True,
             'sockets'        : 1,
             'supported'      : ['YaneuraOu-nagisa', 'YaneuraOu', 'YaneuraOu-souyuukou'],
             'syzygy_max'     : 0,

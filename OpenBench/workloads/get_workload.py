@@ -185,6 +185,17 @@ def valid_spsa_assignment(workload, machine):
 
     return True
 
+def uses_ponder(workload):
+    return (
+        workload.dev_ponder_mode != Test.PonderMode.OFF
+        or workload.base_ponder_mode != Test.PonderMode.OFF
+    )
+
+def threads_per_game(workload):
+    dev_threads  = int(OpenBench.utils.extract_option(workload.dev_options,  'Threads'))
+    base_threads = int(OpenBench.utils.extract_option(workload.base_options, 'Threads'))
+    return dev_threads + base_threads if uses_ponder(workload) else max(dev_threads, base_threads)
+
 def valid_hardware_assignment(workload, machine):
 
     # Extract thread requirements from the workload itself
@@ -194,16 +205,25 @@ def valid_hardware_assignment(workload, machine):
     # Extract the information from our machine
     threads      = machine.info['concurrency']
     hyperthreads = machine.info['physical_cores'] < threads
+    ponder       = uses_ponder(workload)
+
+    # Ponder対局は先後エンジンを物理コア単位で分離できるワーカーだけに配る。
+    if ponder and (
+            machine.info.get('os_name') != 'Linux'
+            or not machine.info.get('hard_cpu_affinity', False)):
+        return False
 
     # For core-odds tests, disable hyperthreads, by halving the thread count
-    if hyperthreads and dev_threads != base_threads:
+    if ponder:
+        threads = min(threads, machine.info['physical_cores'])
+    elif hyperthreads and dev_threads != base_threads:
         threads = threads // 2
 
     # SPSA plays a pair at a time, not a game at a time
     is_spsa = workload.test_mode == 'SPSA'
 
     # Refuse if there are not enough threads for the test
-    if (1 + is_spsa) * max(dev_threads, base_threads) > threads:
+    if (1 + is_spsa) * threads_per_game(workload) > threads:
         return False
 
     # All Criteria have been met
@@ -409,17 +429,21 @@ def game_distribution(test, machine):
 
     worker_threads = machine.info['concurrency']
     worker_sockets = machine.info['sockets']
+    ponder          = uses_ponder(test)
+    game_threads    = threads_per_game(test)
 
     # For core-odds tests, disable hyperthreads, by halving the thread count
-    if machine.info['physical_cores'] < worker_threads and dev_threads != base_threads:
+    if ponder:
+        worker_threads = min(worker_threads, machine.info['physical_cores'])
+    elif machine.info['physical_cores'] < worker_threads and dev_threads != base_threads:
         worker_threads = worker_threads // 2
 
     # Ignore sockets for concurrent match runners, when playing with more than one thread
-    if max(dev_threads, base_threads) > 1:
+    if game_threads > 1:
         worker_sockets = 1
 
     # Max possible concurrent engine games, per copy of match runner
-    max_concurrency = (worker_threads // worker_sockets) // max(dev_threads, base_threads)
+    max_concurrency = (worker_threads // worker_sockets) // game_threads
 
     # SPSA (rshogi ラッパー) は 1 コピーの rshogi spsa が全対局を回す。
     # 数値は情報表示用で、実際の並列度は spsa_to_dictionary が決める
@@ -428,10 +452,14 @@ def game_distribution(test, machine):
             'runner-count'     : 1,
             'concurrency-per'  : max_concurrency,
             'games-per-runner' : 2 * test.spsa['total_pairs'],
+            'threads-per-game' : game_threads,
+            'cpu-affinity'     : False,
         }
 
     return {
         'runner-count'     : worker_sockets,
         'concurrency-per'  : max_concurrency,
         'games-per-runner' : 2 * test.workload_size * max_concurrency,
+        'threads-per-game' : game_threads,
+        'cpu-affinity'     : ponder,
     }

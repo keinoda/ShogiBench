@@ -2,11 +2,13 @@
 
 import importlib
 import hashlib
+import io
 import os
 import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 
 PARENT = os.path.join(os.path.dirname(__file__), os.path.pardir)
@@ -144,6 +146,77 @@ class MatchRunnerPonderModeTests(unittest.TestCase):
         config = self.config('openings_shogi_sfen.epd', 'unexpected')
         with self.assertRaisesRegex(ValueError, 'Unknown Ponder mode'):
             self.worker.MatchRunner.engine_settings(config, 'engine', 'dev', 1.0, 0)
+
+    def affinity_config(self, concurrency=2):
+        config = self.config('openings_shogi_sfen.epd', 'early')
+        config.workload['test']['base'] = dict(config.workload['test']['dev'])
+        config.workload['test']['base']['ponder_mode'] = 'standard'
+        config.workload['distribution'] = {
+            'runner-count'     : 1,
+            'concurrency-per'  : concurrency,
+            'games-per-runner' : 2,
+            'threads-per-game' : 2,
+            'cpu-affinity'     : True,
+        }
+        config.threads = 8
+        return config
+
+    def test_ponder_affinity_uses_disjoint_physical_cpus(self):
+        config = self.affinity_config()
+        with patch.object(self.worker.platform, 'system', return_value='Linux'), patch.object(
+                self.worker, 'linux_physical_cpu_ids', return_value=[2, 4, 6, 8, 10, 12]):
+            affinity = self.worker.MatchRunner.affinity_settings(config, 0)
+
+        self.assertEqual(affinity, '-cpu-affinity 2,4,6,8')
+
+    def test_ponder_affinity_rejects_insufficient_physical_cpus(self):
+        config = self.affinity_config()
+        with patch.object(self.worker.platform, 'system', return_value='Linux'), patch.object(
+                self.worker, 'linux_physical_cpu_ids', return_value=[2, 4, 6]):
+            with self.assertRaisesRegex(RuntimeError, 'requires 4 dedicated physical CPUs'):
+                self.worker.MatchRunner.affinity_settings(config, 0)
+
+    def test_non_ponder_match_does_not_request_affinity(self):
+        config = self.affinity_config()
+        config.workload['distribution']['cpu-affinity'] = False
+        self.assertEqual(self.worker.MatchRunner.affinity_settings(config, 0), '')
+
+    def test_runner_command_includes_the_validated_affinity(self):
+        config = self.affinity_config()
+        settings = self.worker.MatchRunner
+        with patch.object(self.worker.platform, 'system', return_value='Linux'), \
+                patch.object(self.worker, 'linux_physical_cpu_ids', return_value=[2, 4, 6, 8]), \
+                patch.object(settings, 'executable', return_value='./shogitest-ob'), \
+                patch.object(settings, 'basic_settings', return_value='-repeat'), \
+                patch.object(settings, 'adjudication_settings', return_value=''), \
+                patch.object(settings, 'engine_settings', return_value='-engine fake'), \
+                patch.object(settings, 'book_settings', return_value='-openings fake'), \
+                patch.object(settings, 'pgnout_settings', return_value='-pgnout fake'):
+            command = self.worker.build_runner_command(
+                config, 'dev-engine', 'base-engine', 1.0, 0.0, 0)
+
+        self.assertIn('-concurrency 2', command)
+        self.assertIn('-cpu-affinity 2,4,6,8', command)
+
+    def test_linux_cpu_selection_removes_smt_siblings(self):
+        topology = {
+            '/sys/devices/system/cpu/cpu0/topology/physical_package_id' : '0',
+            '/sys/devices/system/cpu/cpu0/topology/core_id'             : '0',
+            '/sys/devices/system/cpu/cpu1/topology/physical_package_id' : '0',
+            '/sys/devices/system/cpu/cpu1/topology/core_id'             : '1',
+            '/sys/devices/system/cpu/cpu4/topology/physical_package_id' : '0',
+            '/sys/devices/system/cpu/cpu4/topology/core_id'             : '0',
+        }
+
+        def topology_file(path, *args, **kwargs):
+            if path not in topology:
+                raise FileNotFoundError(path)
+            return io.StringIO(topology[path])
+
+        with patch.object(self.worker.platform, 'system', return_value='Linux'), \
+                patch.object(self.worker.os, 'sched_getaffinity', return_value={4, 1, 0}, create=True), \
+                patch('builtins.open', side_effect=topology_file):
+            self.assertEqual(self.worker.linux_physical_cpu_ids(), [0, 1])
 
 
 class StageNetworkOptionsTests(unittest.TestCase):

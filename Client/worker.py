@@ -62,7 +62,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 58 # Client version to send to the Server
+CLIENT_VERSION   = 59 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -279,6 +279,14 @@ class Configuration:
         self.mac_address    = hex(uuid.getnode()).upper()[2:]
         self.logical_cores  = psutil.cpu_count(logical=True)
         self.physical_cores = psutil.cpu_count(logical=False)
+        self.hard_cpu_affinity = False
+        if self.os_name == 'Linux':
+            try:
+                self.logical_cores = len(os.sched_getaffinity(0))
+                self.physical_cores = len(linux_physical_cpu_ids())
+                self.hard_cpu_affinity = True
+            except (AttributeError, RuntimeError):
+                pass
         self.ram_total_mb   = psutil.virtual_memory().total // (1024 ** 2)
         self.machine_name   = 'None'
         self.machine_id     = 'None'
@@ -630,6 +638,42 @@ class MatchRunner:
             return '-concurrency %d -games %d' % (concurrency, max(1, total_games // 2))
 
         return '-concurrency %d -rounds %d' % (concurrency, total_games)
+
+    @staticmethod
+    def affinity_settings(config, runner_idx):
+
+        distribution = config.workload['distribution']
+        if not MatchRunner.is_shogi(config) or not distribution.get('cpu-affinity', False):
+            return ''
+
+        if platform.system() != 'Linux':
+            raise RuntimeError('Ponder CPU affinity is supported only on Linux workers')
+
+        dev_threads = int(extract_option(config.workload['test']['dev']['options'], 'Threads'))
+        base_threads = int(extract_option(config.workload['test']['base']['options'], 'Threads'))
+        expected_threads = dev_threads + base_threads
+        game_threads = distribution.get('threads-per-game')
+        if game_threads != expected_threads:
+            raise ValueError(
+                'Invalid Ponder thread budget: server sent %r, expected %d'
+                % (game_threads, expected_threads))
+
+        runner_count = distribution['runner-count']
+        concurrency = distribution['concurrency-per']
+        cpus_per_runner = concurrency * game_threads
+        total_required = runner_count * cpus_per_runner
+        physical_cpus = linux_physical_cpu_ids()
+        configured_capacity = min(config.threads, len(physical_cpus))
+        if total_required > configured_capacity:
+            raise RuntimeError(
+                'Ponder requires %d dedicated physical CPUs, but only %d are available '
+                'to this worker' % (total_required, configured_capacity))
+        if runner_idx < 0 or runner_idx >= runner_count:
+            raise ValueError('Invalid match runner index %d' % runner_idx)
+
+        start = runner_idx * cpus_per_runner
+        cpus = physical_cpus[start:start + cpus_per_runner]
+        return '-cpu-affinity ' + ','.join(str(cpu) for cpu in cpus)
 
     @staticmethod
     def adjudication_settings(config):
@@ -1328,6 +1372,7 @@ def server_configure_worker(config):
         'machine_token'  : load_machine_token(),  # Stable per-instance id, dedupes re-registration
         'logical_cores'  : config.logical_cores,  # Logical cores, to differentiate hyperthreads
         'physical_cores' : config.physical_cores, # Physical cores, to differentiate hyperthreads
+        'hard_cpu_affinity': config.hard_cpu_affinity, # 物理コア単位の固定が可能か
         'ram_total_mb'   : config.ram_total_mb,   # Total RAM on the system, to avoid over assigning
         'machine_id'     : config.machine_id,     # Assigned value, or None. Will be replaced if wrong
         'machine_name'   : config.identity,       # Optional pseudonym for the machine, otherwise None
@@ -1810,10 +1855,39 @@ def extract_option(options, option):
     if (match := re.search('(?<=%s=)[^ ]*' % (option), options)):
         return match.group()
 
+def linux_physical_cpu_ids():
+
+    get_affinity = getattr(os, 'sched_getaffinity', None)
+    if platform.system() != 'Linux' or get_affinity is None:
+        raise RuntimeError('Linux sched_getaffinity() is required for Ponder CPU isolation')
+
+    allowed_cpus = sorted(get_affinity(0))
+    if not allowed_cpus:
+        raise RuntimeError('The worker process has no allowed CPUs')
+
+    representatives = {}
+    for cpu in allowed_cpus:
+        topology_dir = '/sys/devices/system/cpu/cpu%d/topology' % cpu
+        try:
+            with open(os.path.join(topology_dir, 'physical_package_id')) as fin:
+                package_id = int(fin.read().strip())
+            with open(os.path.join(topology_dir, 'core_id')) as fin:
+                core_id = int(fin.read().strip())
+        except (OSError, ValueError) as error:
+            raise RuntimeError(
+                'Unable to determine physical topology for CPU %d: %s' % (cpu, error))
+
+        representatives.setdefault((package_id, core_id), cpu)
+
+    return [representatives[key] for key in sorted(representatives)]
+
 def build_runner_command(config, dev_cmd, base_cmd, scale_factor, timestamp, runner_idx):
 
     flags  = ' ' + MatchRunner.basic_settings(config)
     flags += ' ' + MatchRunner.concurrency_settings(config)
+    affinity = MatchRunner.affinity_settings(config, runner_idx)
+    if affinity:
+        flags += ' ' + affinity
     flags += ' ' + MatchRunner.adjudication_settings(config)
     flags += ' ' + MatchRunner.engine_settings(config, dev_cmd, 'dev', scale_factor, runner_idx)
     flags += ' ' + MatchRunner.engine_settings(config, base_cmd, 'base', scale_factor, runner_idx)
