@@ -499,7 +499,7 @@ dlshogi系が「持ち時間400秒+2秒加算」など。ShogiBench のプリセ
 
 ## 9. shogitest フォーク(keinoda/shogitest)
 
-対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.4)。
+対局実行には `keinoda/shogitest` の `shogibench` ブランチを使用します(v0.1.5)。
 本家からの主な変更:
 
 - **成績表示を先頭エンジン(=Dev)基準に修正**: 従来は「A vs B」と表示しつつ
