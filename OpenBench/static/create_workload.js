@@ -208,6 +208,10 @@ function set_engine(engine, target) {
     document.getElementById(target + '_engine').value = engine;
     document.getElementById(target + '_repo'  ).value = repos[engine] || config.engines[engine].source
 
+    delete pending_branch_values[target + '_branch'];
+    set_branch_placeholder(target, 'GitHubから取得中...', true);
+    refresh_branch_options(target);
+
     create_network_options(target + '_network', engine);
     create_build_options(target + '_build', engine);
 
@@ -239,9 +243,27 @@ function set_option(option_name, option_value) {
     }
 
     else {
+        var matched = false;
         for (let i = 0; i < element.options.length; i++)
-            if (element.options[i].text === option_value || element.options[i].value === option_value)
+            if (element.options[i].text === option_value || element.options[i].value === option_value) {
                 element.value = element.options[i].value;
+                matched = true;
+            }
+
+        if (option_name.endsWith('_branch')) {
+            if (matched) {
+                delete pending_branch_values[option_name];
+            } else {
+                pending_branch_values[option_name] = option_value;
+
+                var option      = document.createElement('option');
+                option.text     = '指定ブランチが見つかりません: ' + option_value;
+                option.value    = '';
+                option.disabled = true;
+                option.selected = true;
+                element.insertBefore(option, element.firstChild);
+            }
+        }
     }
 }
 

@@ -80,6 +80,7 @@ urlpatterns = [
     # Nice endpoints, which can be hit from the website or with credentials cleanly
     django.urls.path(r'api/config/', OpenBench.views.api_configs),
     django.urls.path(r'api/config/<str:engine>/', OpenBench.views.api_configs),
+    django.urls.path(r'api/branches/', OpenBench.views.github_branches),
     django.urls.path(r'api/networks/<str:engine>/', OpenBench.views.api_networks),
     django.urls.path(r'api/networks/<str:engine>/<str:identifier>/', OpenBench.views.api_network_download),
     django.urls.path(r'api/networks/<str:engine>/<str:identifier>/aux/<str:name>/', OpenBench.views.api_network_download_aux),

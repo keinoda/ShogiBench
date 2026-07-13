@@ -370,6 +370,100 @@ class GithubLookupTests(TestCase):
         self.assertIn('GitHub API rate limit exceeded', errors[0])
         self.assertIn('OPENBENCH_GITHUB_TOKEN', errors[0])
 
+class GithubBranchListTests(TestCase):
+
+    class FakeResponse:
+        def __init__(self, status_code, data, headers=None):
+            self.status_code = status_code
+            self._data = data
+            self.headers = headers or {}
+
+        def json(self):
+            return self._data
+
+    def setUp(self):
+        self.user = User.objects.create_user('alice', 'a@example.com', 'account-password')
+        Profile.objects.create(user=self.user, enabled=True)
+        self.client.login(username='alice', password='account-password')
+
+    def test_endpoint_requires_login(self):
+        response = Client().get('/api/branches/', {
+            'engine' : 'YaneuraOu-nagisa',
+            'repo'   : 'https://github.com/keinoda/YaneuraOu',
+        })
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()['error'], 'ログインが必要です')
+
+    def test_invalid_repository_is_rejected_before_github_request(self):
+        with patch('OpenBench.workloads.verify_workload.requests.get') as mock_get:
+            response = self.client.get('/api/branches/', {
+                'engine' : 'YaneuraOu-nagisa',
+                'repo'   : 'https://example.com/keinoda/YaneuraOu',
+            })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('GitHubリポジトリURL', response.json()['error'])
+        mock_get.assert_not_called()
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_endpoint_uses_token_and_collects_all_pages(self, mock_get):
+        first_page = [ { 'name' : 'branch-%03d' % index } for index in range(100) ]
+        mock_get.side_effect = [
+            self.FakeResponse(200, { 'default_branch' : 'master' }),
+            self.FakeResponse(200, first_page),
+            self.FakeResponse(200, [ { 'name' : 'master' } ]),
+        ]
+
+        response = self.client.get('/api/branches/', {
+            'engine' : 'YaneuraOu-nagisa',
+            'repo'   : 'https://github.com/keinoda/YaneuraOu',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['default_branch'], 'master')
+        self.assertEqual(len(response.json()['branches']), 101)
+        self.assertEqual(response.json()['branches'], sorted(
+            response.json()['branches'], key=str.casefold))
+        self.assertEqual(mock_get.call_count, 3)
+        self.assertEqual(mock_get.call_args_list[0].kwargs['headers'], {
+            'Authorization' : 'Bearer test-token',
+            'Accept'        : 'application/vnd.github+json',
+        })
+        self.assertEqual(mock_get.call_args_list[1].kwargs['params'], {
+            'per_page' : 100, 'page' : 1,
+        })
+        self.assertEqual(mock_get.call_args_list[2].kwargs['params'], {
+            'per_page' : 100, 'page' : 2,
+        })
+
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_github_error_is_returned_to_the_form(self, mock_get):
+        mock_get.return_value = self.FakeResponse(
+            403,
+            { 'message' : 'API rate limit exceeded' },
+            { 'x-ratelimit-remaining' : '0' },
+        )
+
+        response = self.client.get('/api/branches/', {
+            'engine' : 'YaneuraOu-nagisa',
+            'repo'   : 'https://github.com/keinoda/YaneuraOu',
+        })
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('GitHub API rate limit exceeded', response.json()['error'])
+        self.assertIn('OPENBENCH_GITHUB_TOKEN', response.json()['error'])
+
+    def test_workload_form_uses_branch_selectors(self):
+        response = self.client.get('/test/new/')
+
+        self.assertContains(response, 'id="dev_branch"')
+        self.assertContains(response, 'id="base_branch"')
+        self.assertContains(response, 'GitHubから取得中...')
+        self.assertNotContains(response, '<input id="dev_branch"')
+        self.assertNotContains(response, '<input id="base_branch"')
+
 class InviteOnlyRegistrationTests(TestCase):
 
     def test_register_get_redirects_to_login(self):
@@ -1707,7 +1801,11 @@ class TuneKitTests(TestCase):
 
         # 一覧・詳細ページが描画できる
         self.assertContains(self.client.get('/tunekits/'), 'mini')
-        self.assertContains(self.client.get('/tunekits/%d/' % (kit.id)), 'futility_1')
+        detail = self.client.get('/tunekits/%d/' % (kit.id))
+        self.assertContains(detail, 'futility_1')
+        self.assertContains(detail, 'id="kit_branch"')
+        self.assertContains(detail, 'GitHubから取得中...')
+        self.assertNotContains(detail, '<input id="branch"')
 
     def test_create_rejects_bad_tune(self):
 

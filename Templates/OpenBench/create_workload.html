@@ -10,6 +10,7 @@
     {{ build_variants|json_script:"json-build-variants" }}
     {{ tune_kits|json_script:"json-tune-kits" }}
 
+    <script src="{% static 'branch_select.js' %}?{{ static_version }}"></script>
     <script src="{% static 'create_workload.js' %}?{{ static_version }}"></script>
     <script src="{% static 'default_text.js' %}?{{ static_version }}"></script>
 
@@ -44,7 +45,7 @@
                 </div>
 
                 <div class="row">
-                    <label for="dev_repo"> {{dev_text}} ソース </label> <input id="dev_repo" name="dev_repo">
+                    <label for="dev_repo"> {{dev_text}} ソース </label> <input id="dev_repo" name="dev_repo" oninput="schedule_branch_refresh('dev')">
                 </div>
 
                 {% if workload == "TEST" or workload == "DATAGEN" %}
@@ -58,14 +59,22 @@
                     </div>
 
                     <div class="row">
-                        <label for="base_repo"> Base ソース </label> <input id="base_repo" name="base_repo">
+                        <label for="base_repo"> Base ソース </label> <input id="base_repo" name="base_repo" oninput="schedule_branch_refresh('base')">
                     </div>
                 {% endif %}
 
                 <h3> {{dev_title_text}} 設定 </h3>
 
                 <div class="row">
-                    <label for="dev_branch" > {{dev_text}} ブランチ </label> <input id="dev_branch" name="dev_branch" autofocus>
+                    <label for="dev_branch" > {{dev_text}} ブランチ </label>
+                    <div class="branch-select-controls">
+                        <select id="dev_branch" name="dev_branch" required autofocus onchange="accept_branch_selection('dev')">
+                            <option selected disabled value=""> GitHubから取得中... </option>
+                        </select>
+                        <button type="button" class="branch-refresh-button" onclick="refresh_branch_options('dev', true)" title="GitHubからブランチ一覧を再取得" aria-label="Devブランチ一覧を再取得">
+                            <i class="fa-solid fa-rotate"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="row">
                     <label for="dev_display" title="一覧やテストページでこの側を指す名前。省略時はブランチ名/ネットワーク名から自動決定"> {{dev_text}} 表示名 </label>
@@ -106,7 +115,15 @@
                     <h3> Base 設定 </h3>
 
                     <div class="row">
-                        <label for="base_branch"> Base ブランチ </label> <input id="base_branch" name="base_branch">
+                        <label for="base_branch"> Base ブランチ </label>
+                        <div class="branch-select-controls">
+                            <select id="base_branch" name="base_branch" required onchange="accept_branch_selection('base')">
+                                <option selected disabled value=""> GitHubから取得中... </option>
+                            </select>
+                            <button type="button" class="branch-refresh-button" onclick="refresh_branch_options('base', true)" title="GitHubからブランチ一覧を再取得" aria-label="Baseブランチ一覧を再取得">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="row">
                         <label for="base_display" title="一覧やテストページでこの側を指す名前。省略時はブランチ名/ネットワーク名から自動決定"> Base 表示名 </label>

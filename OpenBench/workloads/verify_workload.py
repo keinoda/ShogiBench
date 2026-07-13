@@ -79,6 +79,70 @@ def github_json(response, branch):
 
     return data
 
+def collect_github_branches(repo, engine):
+
+    if engine not in OpenBench.config.OPENBENCH_CONFIG['engines']:
+        raise ValueError('指定されたエンジンは存在しません')
+
+    repo = repo.rstrip('/')
+    match = re.fullmatch(
+        r'https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)', repo)
+    if not match:
+        raise ValueError('GitHubリポジトリURLが不正です')
+
+    engine_config = OpenBench.config.OPENBENCH_CONFIG['engines'][engine]
+    headers = dict(OpenBench.utils.read_git_credentials(engine) or {})
+
+    if engine_config['private'] and not headers:
+        raise ValueError('この非公開エンジンのアクセストークンがサーバーにありません')
+
+    if engine_config['private'] and repo != engine_config['source'].rstrip('/'):
+        raise ValueError('非公開エンジンでは登録済みリポジトリ以外を参照できません')
+
+    headers['Accept'] = 'application/vnd.github+json'
+    api_base = OpenBench.utils.path_join(
+        'https://api.github.com/repos', match.group(1), match.group(2))
+
+    try:
+        repository = github_json(
+            requests.get(api_base, headers=headers, timeout=30), repo)
+
+        if not isinstance(repository, dict):
+            raise GithubAPIError('GitHub API returned invalid repository data for %s' % repo)
+
+        default_branch = repository.get('default_branch')
+        if default_branch is None:
+            default_branch = ''
+        elif not isinstance(default_branch, str):
+            raise GithubAPIError('GitHub API response did not include a default branch for %s' % repo)
+
+        branches = []
+        page = 1
+        while True:
+            response = requests.get(
+                OpenBench.utils.path_join(api_base, 'branches'),
+                headers=headers,
+                params={ 'per_page' : 100, 'page' : page },
+                timeout=30,
+            )
+            data = github_json(response, 'branches for %s' % repo)
+            if not isinstance(data, list):
+                raise GithubAPIError('GitHub API returned invalid branch data for %s' % repo)
+
+            names = [item.get('name') for item in data if isinstance(item, dict)]
+            if any(not isinstance(name, str) or not name for name in names) or len(names) != len(data):
+                raise GithubAPIError('GitHub API returned invalid branch data for %s' % repo)
+
+            branches.extend(names)
+            if len(data) < 100:
+                break
+            page += 1
+
+    except requests.RequestException as error:
+        raise GithubAPIError('GitHub APIへの接続に失敗しました: %s' % error)
+
+    return sorted(set(branches), key=str.casefold), default_branch
+
 def verify_workload(request, workload_type):
 
     assert workload_type in [ 'TEST', 'TUNE', 'DATAGEN' ]

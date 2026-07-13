@@ -33,7 +33,7 @@ import OpenBench.model_utils
 from OpenBench.workloads.create_workload import create_workload
 from OpenBench.workloads.get_workload import get_workload
 from OpenBench.workloads.modify_workload import modify_workload
-from OpenBench.workloads.verify_workload import verify_workload
+from OpenBench.workloads.verify_workload import GithubAPIError, collect_github_branches, verify_workload
 from OpenBench.workloads.view_workload import view_workload
 
 from OpenBench.config import OPENBENCH_CONFIG, OPENBENCH_CONFIG_CHECKSUM, OPENBENCH_STATIC_VERSION
@@ -593,7 +593,7 @@ def tunekit(request, pk):
         'param_names'  : OpenBench.tune_kits.kit_param_names(kit.tune_text),
         'check_repo'   : OPENBENCH_CONFIG['engines'][kit.engine]['source']
                              if kit.engine in OPENBENCH_CONFIG['engines'] else '',
-        'check_branch' : 'master',
+        'check_branch' : '',
     }
 
     if request.method != 'POST':
@@ -1192,6 +1192,31 @@ def new_workload(request, workload_type):
         return redirect(request, '/index/', error='Unknown Workload type')
 
     return create_workload(request, workload_type.upper())
+
+def github_branches(request):
+
+    if not request.user.is_authenticated:
+        return JsonResponse({ 'error' : 'ログインが必要です' }, status=401)
+
+    profile = Profile.objects.filter(user=request.user).first()
+    if not profile or not profile.enabled:
+        return JsonResponse({ 'error' : '有効なユーザーのみ利用できます' }, status=403)
+
+    if request.method != 'GET':
+        return JsonResponse({ 'error' : 'GETリクエストのみ利用できます' }, status=405)
+
+    try:
+        branches, default_branch = collect_github_branches(
+            request.GET.get('repo', ''), request.GET.get('engine', ''))
+    except ValueError as error:
+        return JsonResponse({ 'error' : str(error) }, status=400)
+    except GithubAPIError as error:
+        return JsonResponse({ 'error' : str(error) }, status=502)
+
+    return JsonResponse({
+        'branches'       : branches,
+        'default_branch' : default_branch,
+    })
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                          NETWORK MANAGEMENT VIEWS                           #

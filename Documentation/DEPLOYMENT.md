@@ -34,6 +34,7 @@ ShogiBench は「コーディネーションサーバー」(この Django アプ
 | `OPENBENCH_DATA_DIR` | 推奨 | SQLite と Media の置き場所。永続ボリュームを指すこと (例 `/data`) |
 | `OPENBENCH_ALLOWED_HOSTS` | 推奨 | 公開ホスト名 (カンマ区切り)。例 `shogibench.fly.dev` |
 | `OPENBENCH_CSRF_TRUSTED_ORIGINS` | 推奨 | `https://` 付きの公開オリジン。ログインフォームの CSRF に必要 |
+| `OPENBENCH_GITHUB_TOKEN` | 推奨 | ブランチ一覧・コミット確認用の GitHub token。未設定時は未認証APIのレート制限を受ける |
 | `OPENBENCH_DEBUG` | 任意 | 明示的に上書きしたい場合のみ (`1`/`0`) |
 | `WEB_CONCURRENCY` | 任意 | gunicorn ワーカー数 (既定 2) |
 
