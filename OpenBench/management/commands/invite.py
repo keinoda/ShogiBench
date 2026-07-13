@@ -33,6 +33,7 @@ import secrets
 import sys
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
 from OpenBench.models import Profile
@@ -42,7 +43,7 @@ class Command(BaseCommand):
     help = 'Create an enabled user account (invite-only registration)'
 
     def add_arguments(self, parser):
-        parser.add_argument('username', help='Alpha-numeric username')
+        parser.add_argument('username', help='Django-compatible username')
         parser.add_argument('--email', default='', help='Email address (optional)')
         parser.add_argument('--password', default=None, help='Password. Randomly generated when omitted')
         parser.add_argument('--approver', action='store_true', help='Grant test-approval rights')
@@ -51,8 +52,10 @@ class Command(BaseCommand):
 
         username = options['username']
 
-        if not username.isalnum():
-            raise CommandError('Usernames must be alpha-numeric')
+        try:
+            User._meta.get_field('username').run_validators(username)
+        except ValidationError as error:
+            raise CommandError('Invalid username: %s' % ('; '.join(error.messages)))
 
         if User.objects.filter(username=username).exists():
             raise CommandError('User "%s" already exists' % (username))
