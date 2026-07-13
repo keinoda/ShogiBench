@@ -15,6 +15,9 @@ always-on coordination server and on-demand high-performance workers:
 - **Invite-only accounts** — public sign-up is disabled. Administrators create
   accounts with `python manage.py invite <username> [--approver]`. Creating
   tests, tuning, and managing networks all require a login.
+- **Test creation API** — authenticated users can create the same tests as the
+  `/test/new/` page through `POST /api/tests/`. See
+  [`Documentation/TEST_API.md`](Documentation/TEST_API.md).
 
 Quick start for a worker (or copy the snippet from `/workers/`):
 

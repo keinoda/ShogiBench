@@ -18,7 +18,8 @@
 #                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-import io, os, hashlib, datetime, json, secrets, shlex, sys, re
+import base64, binascii, io, os, hashlib, datetime, json, secrets, shlex, sys, re
+from types import SimpleNamespace
 
 import paramiko
 
@@ -30,7 +31,7 @@ import OpenBench.config
 import OpenBench.utils
 import OpenBench.model_utils
 
-from OpenBench.workloads.create_workload import create_workload
+from OpenBench.workloads.create_workload import create_new_test, create_workload, finalize_workload_creation
 from OpenBench.workloads.get_workload import get_workload
 from OpenBench.workloads.modify_workload import modify_workload
 from OpenBench.workloads.verify_workload import GithubAPIError, collect_github_branches, verify_workload
@@ -1597,40 +1598,152 @@ def client_submit_pgn(request, machine):
 #                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-def api_response(data):
-    return HttpResponse(json.dumps(data, indent=4), content_type='application/json')
+def api_response(data, status=200):
+    return HttpResponse(
+        json.dumps(data, indent=4),
+        content_type='application/json',
+        status=status,
+    )
+
+def api_credentials(request, data=None):
+
+    authorization = request.META.get('HTTP_AUTHORIZATION', '')
+    scheme, _, encoded = authorization.partition(' ')
+
+    if scheme.lower() == 'basic' and encoded:
+        try:
+            decoded = base64.b64decode(encoded, validate=True).decode('utf-8')
+            username, separator, password = decoded.partition(':')
+            if not separator:
+                return None, None
+            return username, password
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            return None, None
+
+    data = request.POST if data is None else data
+    return data.get('username'), data.get('password')
+
+def api_authenticated_user(request, data=None, allow_worker_key=False):
+
+    if request.user.is_authenticated:
+        return request.user
+
+    username, password = api_credentials(request, data)
+    if not username or password is None:
+        return None
+
+    user = django.contrib.auth.authenticate(username=username, password=password)
+
+    if user is None and allow_worker_key:
+        user = authenticate_worker_key(username, password)
+
+    return user
 
 @csrf_exempt
 def api_authenticate(request, require_enabled=False, allow_worker_key=False):
 
-    try:
+    # Force requiring an enabled user when require_login_to_view is set
+    require_enabled = require_enabled or OPENBENCH_CONFIG['require_login_to_view']
 
-        # Force requiring an enabled user when require_login_to_view is set
-        require_enabled = require_enabled or OPENBENCH_CONFIG['require_login_to_view']
+    # Don't require a login for Public frameworks
+    if not require_enabled:
+        return True
 
-        # Don't require a login for Public frameworks
-        if not require_enabled:
-            return True
+    user = api_authenticated_user(request, allow_worker_key=allow_worker_key)
+    return bool(user and Profile.objects.filter(user=user, enabled=True).exists())
 
-        # Request is made from a browser, and is already logged in
-        if request.user.is_authenticated:
-            return Profile.objects.get(user=request.user).enabled
+TEST_API_REQUIRED_FIELDS = (
+    'dev_engine', 'dev_repo', 'dev_branch', 'dev_network',
+    'dev_options', 'dev_time_control',
+    'base_engine', 'base_repo', 'base_branch', 'base_network',
+    'base_options', 'base_time_control',
+    'book_name', 'upload_pgns', 'test_mode',
+    'priority', 'throughput', 'workload_size',
+    'scale_method', 'scale_nps',
+    'syzygy_wdl', 'syzygy_adj', 'win_adj', 'draw_adj',
+)
 
-        # Request might be made from the command line. Check the headers
-        user = django.contrib.auth.authenticate(
-            username=request.POST['username'], password=request.POST['password'])
+def api_test_payload(request):
 
-        # Workers download Networks with their Worker Key as the password
-        if user is None and allow_worker_key:
-            return authenticate_worker_key(
-                request.POST['username'], request.POST['password']) is not None
+    if request.content_type == 'application/json':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None, 'Request body must be valid UTF-8 JSON'
 
-        return Profile.objects.get(user=user).enabled
+        if not isinstance(data, dict):
+            return None, 'JSON request body must be an object'
 
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        return False
+    else:
+        data = request.POST.dict()
+
+    normalized = {}
+    for key, value in data.items():
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            return None, 'Field %s must be a string or number' % key
+        normalized[key] = str(value)
+
+    return normalized, None
+
+@csrf_exempt
+def api_tests(request):
+
+    if request.method != 'POST':
+        response = api_response({ 'error' : 'POST requests only' }, status=405)
+        response['Allow'] = 'POST'
+        return response
+
+    data, error = api_test_payload(request)
+    if error:
+        return api_response({ 'error' : error }, status=400)
+
+    user = api_authenticated_user(request, data)
+    if user is None:
+        return api_response({ 'error' : 'Invalid API credentials' }, status=401)
+
+    profile = Profile.objects.filter(user=user).first()
+    if profile is None or not profile.enabled:
+        return api_response({ 'error' : 'Only enabled users can create tests' }, status=403)
+
+    required = list(TEST_API_REQUIRED_FIELDS)
+    if data.get('test_mode') == 'SPRT':
+        required.extend(['test_bounds', 'test_confidence'])
+    elif data.get('test_mode') == 'GAMES':
+        required.append('test_max_games')
+
+    missing = sorted(field for field in required if field not in data)
+    if missing:
+        return api_response({
+            'error'   : 'Missing required fields',
+            'details' : missing,
+        }, status=400)
+
+    api_request = SimpleNamespace(user=user, POST=data)
+
+    with transaction.atomic():
+        workload, errors = create_new_test(api_request)
+        if errors:
+            return api_response({
+                'error'   : 'Test validation failed',
+                'details' : errors,
+            }, status=400)
+
+        warning = finalize_workload_creation(api_request, workload)
+
+    result = {
+        'test' : {
+            'id'       : workload.id,
+            'url'      : request.build_absolute_uri('/test/%d/' % workload.id),
+            'author'   : workload.author,
+            'approved' : workload.approved,
+            'awaiting' : workload.awaiting,
+        },
+    }
+
+    if warning:
+        result['warning'] = warning
+
+    return api_response(result, status=201)
 
 @csrf_exempt
 def api_configs(request, engine=None):

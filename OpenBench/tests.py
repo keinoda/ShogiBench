@@ -24,14 +24,16 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 
+import base64
 import hashlib
+import json
 import os
 import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
-from OpenBench.models import BuildVariant, Engine, Network, NetworkAuxFile, Profile, Test, WorkerKey
+from OpenBench.models import BuildVariant, Engine, LogEvent, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
 from OpenBench.workloads.get_workload import game_distribution, valid_hardware_assignment, workload_to_dictionary
@@ -1197,6 +1199,157 @@ class PonderModeWorkloadTests(TestCase):
 
     def create_test(self, **overrides):
         return self.post_test(self.test_form(**overrides))
+
+class TestCreationAPITests(TestCase):
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            'Agent-AI', 'agent@example.com', 'test-api-password')
+        Profile.objects.create(
+            user=self.user, enabled=True, approver=False)
+        self.worker_key = WorkerKey.objects.create(
+            user=self.user, name='agent-worker', token='w' * 48)
+
+        self.payload = {
+            'dev_engine'        : 'YaneuraOu-nagisa',
+            'dev_repo'          : 'https://github.com/keinoda/YaneuraOu',
+            'dev_branch'        : 'master',
+            'dev_bench'         : '',
+            'dev_network'       : '',
+            'dev_build'         : 'default',
+            'dev_options'       : 'Threads=1 Hash=16',
+            'dev_time_control'  : '10+0.1',
+            'dev_ponder_mode'   : 'off',
+            'base_engine'       : 'YaneuraOu-nagisa',
+            'base_repo'         : 'https://github.com/keinoda/YaneuraOu',
+            'base_branch'       : 'master',
+            'base_bench'        : '',
+            'base_network'      : '',
+            'base_build'        : 'default',
+            'base_options'      : 'Threads=1 Hash=16',
+            'base_time_control' : '10+0.1',
+            'base_ponder_mode'  : 'off',
+            'book_name'         : 'yaneuraou2025_ply24_shogi_sfen.epd',
+            'upload_pgns'       : 'FALSE',
+            'test_mode'         : 'GAMES',
+            'test_max_games'    : '2',
+            'priority'          : '0',
+            'throughput'        : '1000',
+            'workload_size'     : '1',
+            'scale_method'      : 'BASE',
+            'scale_nps'         : '1000000',
+            'syzygy_wdl'        : 'DISABLED',
+            'syzygy_adj'        : 'DISABLED',
+            'win_adj'           : 'None',
+            'draw_adj'          : 'None',
+        }
+
+    def basic_auth(self, password='test-api-password'):
+        token = base64.b64encode(
+            ('Agent-AI:%s' % password).encode('utf-8')).decode('ascii')
+        return 'Basic %s' % token
+
+    def post_json(self, payload=None, password='test-api-password'):
+        return self.client.post(
+            '/api/tests/',
+            data=json.dumps(payload or self.payload),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.basic_auth(password),
+        )
+
+    def github_info(self):
+        return (
+            'https://github.com/keinoda/YaneuraOu/archive/' + 'b' * 40 + '.zip',
+            'master',
+            'a' * 40,
+            0,
+        )
+
+    def test_non_approver_can_create_pending_test_with_json(self):
+        with patch(
+                'OpenBench.workloads.verify_workload.collect_github_info',
+                return_value=(self.github_info(), True)):
+            response = self.post_json()
+
+        self.assertEqual(response.status_code, 201)
+        workload = Test.objects.get()
+        self.assertEqual(response.json()['test']['id'], workload.id)
+        self.assertEqual(response.json()['test']['author'], 'Agent-AI')
+        self.assertFalse(response.json()['test']['approved'])
+        self.assertFalse(workload.approved)
+        self.assertEqual(workload.author, 'Agent-AI')
+
+        profile = Profile.objects.get(user=self.user)
+        self.assertEqual(profile.tests, 1)
+        self.assertTrue(LogEvent.objects.filter(
+            author='Agent-AI', test_id=workload.id).exists())
+
+    def test_form_credentials_can_create_test(self):
+        data = dict(
+            self.payload,
+            username='Agent-AI',
+            password='test-api-password',
+        )
+        with patch(
+                'OpenBench.workloads.verify_workload.collect_github_info',
+                return_value=(self.github_info(), True)):
+            response = self.client.post('/api/tests/', data)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(Test.objects.get().author, 'Agent-AI')
+
+    def test_invalid_credentials_are_rejected(self):
+        response = self.post_json(password='wrong-password')
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(Test.objects.exists())
+
+    def test_disabled_profile_is_rejected(self):
+        profile = Profile.objects.get(user=self.user)
+        profile.enabled = False
+        profile.save(update_fields=['enabled'])
+
+        response = self.post_json()
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Test.objects.exists())
+
+    def test_worker_key_cannot_create_test(self):
+        response = self.post_json(password=self.worker_key.token)
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(Test.objects.exists())
+
+    def test_missing_fields_return_structured_error(self):
+        payload = dict(self.payload)
+        del payload['dev_repo']
+
+        response = self.post_json(payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Missing required fields')
+        self.assertIn('dev_repo', response.json()['details'])
+        self.assertFalse(Test.objects.exists())
+
+    def test_ui_validation_errors_are_returned_as_json(self):
+        payload = dict(self.payload, dev_ponder_mode='invalid')
+        with patch(
+                'OpenBench.workloads.verify_workload.collect_github_info',
+                return_value=(self.github_info(), True)):
+            response = self.post_json(payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Test validation failed')
+        self.assertTrue(any(
+            'Ponder' in detail for detail in response.json()['details']))
+        self.assertFalse(Test.objects.exists())
+
+    def test_get_is_not_allowed(self):
+        response = self.client.get('/api/tests/')
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response['Allow'], 'POST')
+
+    def test_basic_auth_works_for_existing_config_api(self):
+        response = self.client.get(
+            '/api/config/', HTTP_AUTHORIZATION=self.basic_auth())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('engines', response.json())
 
 class StatBlockTests(TestCase):
 
