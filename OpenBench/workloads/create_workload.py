@@ -56,6 +56,23 @@ def resolve_build_variant(request, engine_field, variant_field):
     args    = OpenBench.views.engine_build_variants(engine).get(variant, '')
     return variant, args
 
+def finalize_workload_creation(request, workload):
+
+    warning = None
+    if OpenBench.utils.branch_is_out_of_date(workload):
+        warning = 'Consider Rebasing: Dev (%s) appears behind Base (%s)' % (workload.dev.name, workload.base.name)
+
+    username = request.user.username
+    profile  = Profile.objects.get(user=request.user)
+    summary  = 'CREATE P=%d TP=%d' % (workload.priority, workload.throughput)
+    LogEvent.objects.create(author=username, summary=summary, log_file='', test_id=workload.id)
+
+    if not OPENBENCH_CONFIG['use_cross_approval'] and profile.approver:
+        workload.approved = True
+        workload.save(update_fields=['approved'])
+
+    return warning
+
 def create_workload(request, workload_type):
 
     assert workload_type in [ 'TEST', 'TUNE', 'DATAGEN' ]
@@ -117,16 +134,7 @@ def create_workload(request, workload_type):
         paths = { 'TEST' : '/test/new/', 'TUNE' : '/tune/new/', 'DATAGEN' : '/datagen/new/' }
         return OpenBench.views.redirect(request, paths[workload_type], error='\n'.join(errors))
 
-    if warning := OpenBench.utils.branch_is_out_of_date(workload):
-        warning = 'Consider Rebasing: Dev (%s) appears behind Base (%s)' % (workload.dev.name, workload.base.name)
-
-    username = request.user.username
-    profile  = Profile.objects.get(user=request.user)
-    summary  = 'CREATE P=%d TP=%d' % (workload.priority, workload.throughput)
-    LogEvent.objects.create(author=username, summary=summary, log_file='', test_id=workload.id)
-
-    if not OPENBENCH_CONFIG['use_cross_approval'] and profile.approver:
-        workload.approved = True; workload.save()
+    warning = finalize_workload_creation(request, workload)
 
     return OpenBench.views.redirect(request, '/index/', warning=warning)
 

@@ -10,6 +10,7 @@ Shogi 向けフォークで、Django サーバー (`OpenBench/`) とワーカー
 | やりたいこと | 読む文書 |
 |---|---|
 | **SPSA チューニングを実際に回す** | `Documentation/SPSA_RUNBOOK.md` — 準備→スモーク→本番→焼き戻し→SPRT検証まで、操作と判定基準を [操作]→[期待される結果]→[NGなら] 形式で書いたランブック |
+| AI・スクリプトから通常テストを作成する | `Documentation/TEST_API.md` — 認証、JSONフィールド、応答、エラー |
 | SPSA の仕組み・設計 (rshogi ラッパー / .tuneキット) | `Documentation/SPSA.md` |
 | サーバー/ワーカーのデプロイ・運用 | `Documentation/DEPLOYMENT.md` |
 
