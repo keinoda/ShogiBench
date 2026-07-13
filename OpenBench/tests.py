@@ -26,11 +26,14 @@ from django.test import Client, TestCase, override_settings
 
 import base64
 import hashlib
+import io
 import json
 import os
 import tempfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import override_settings
 
 from OpenBench.models import BuildVariant, Engine, LogEvent, Network, NetworkAuxFile, Profile, Test, WorkerKey
@@ -478,6 +481,34 @@ class InviteOnlyRegistrationTests(TestCase):
             'username' : 'mallory', 'email' : 'm@example.com',
             'password1' : 'hunter22', 'password2' : 'hunter22' })
         self.assertFalse(User.objects.filter(username='mallory').exists())
+
+class InviteCommandTests(TestCase):
+
+    def test_invite_accepts_hyphenated_django_username(self):
+        output = io.StringIO()
+        call_command(
+            'invite',
+            'Agent-AI',
+            password='test-invite-password',
+            stdout=output,
+        )
+
+        user = User.objects.get(username='Agent-AI')
+        profile = Profile.objects.get(user=user)
+        self.assertTrue(user.check_password('test-invite-password'))
+        self.assertTrue(profile.enabled)
+        self.assertFalse(profile.approver)
+        self.assertIn('Created user "Agent-AI"', output.getvalue())
+
+    def test_invite_rejects_username_outside_django_rules(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                'invite',
+                'Agent/AI',
+                password='test-invite-password',
+            )
+
+        self.assertFalse(User.objects.filter(username='Agent/AI').exists())
 
 class ProfileConfigTests(TestCase):
 
