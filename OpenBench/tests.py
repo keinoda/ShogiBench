@@ -1240,6 +1240,18 @@ class TestCreationAPITests(TestCase):
             user=self.user, enabled=True, approver=False)
         self.worker_key = WorkerKey.objects.create(
             user=self.user, name='agent-worker', token='w' * 48)
+        self.dev = Engine.objects.create(
+            name='feature-branch',
+            source='https://github.com/keinoda/YaneuraOu/archive/' + 'b' * 40 + '.zip',
+            sha='b' * 40,
+            bench=1234567,
+        )
+        self.base = Engine.objects.create(
+            name='master',
+            source='https://github.com/keinoda/YaneuraOu/archive/' + 'a' * 40 + '.zip',
+            sha='a' * 40,
+            bench=1234567,
+        )
 
         self.payload = {
             'dev_engine'        : 'YaneuraOu-nagisa',
@@ -1288,6 +1300,38 @@ class TestCreationAPITests(TestCase):
             HTTP_AUTHORIZATION=self.basic_auth(password),
         )
 
+    def get_tests(self, params=None, password='test-api-password'):
+        return self.client.get(
+            '/api/tests/',
+            data=params or {},
+            HTTP_AUTHORIZATION=self.basic_auth(password),
+        )
+
+    def make_workload(self, **overrides):
+        data = {
+            'author'            : 'Agent-AI',
+            'upload_pgns'       : 'FALSE',
+            'book_name'         : 'yaneuraou2025_ply24_shogi_sfen.epd',
+            'dev'               : self.dev,
+            'dev_repo'          : 'https://github.com/keinoda/YaneuraOu',
+            'dev_engine'        : 'YaneuraOu-nagisa',
+            'dev_options'       : 'Threads=1 Hash=16',
+            'dev_network'       : '',
+            'dev_netname'       : '',
+            'dev_time_control'  : '10.0+0.10',
+            'base'              : self.base,
+            'base_repo'         : 'https://github.com/keinoda/YaneuraOu',
+            'base_engine'       : 'YaneuraOu-nagisa',
+            'base_options'      : 'Threads=1 Hash=16',
+            'base_network'      : '',
+            'base_netname'      : '',
+            'base_time_control' : '10.0+0.10',
+            'test_mode'         : 'GAMES',
+            'max_games'         : 200,
+        }
+        data.update(overrides)
+        return Test.objects.create(**data)
+
     def github_info(self):
         return (
             'https://github.com/keinoda/YaneuraOu/archive/' + 'b' * 40 + '.zip',
@@ -1314,6 +1358,12 @@ class TestCreationAPITests(TestCase):
         self.assertEqual(profile.tests, 1)
         self.assertTrue(LogEvent.objects.filter(
             author='Agent-AI', test_id=workload.id).exists())
+
+        status_response = self.get_tests({ 'author': 'Agent-AI' })
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(status_response.json()['summary']['pending'], 1)
+        self.assertEqual(status_response.json()['tests'][0]['id'], workload.id)
+        self.assertEqual(status_response.json()['tests'][0]['status'], 'pending')
 
     def test_form_credentials_can_create_test(self):
         data = dict(
@@ -1371,10 +1421,135 @@ class TestCreationAPITests(TestCase):
             'Ponder' in detail for detail in response.json()['details']))
         self.assertFalse(Test.objects.exists())
 
-    def test_get_is_not_allowed(self):
+    def test_get_returns_current_test_status_and_results(self):
+        pending = self.make_workload()
+        awaiting = self.make_workload(awaiting=True)
+        active = self.make_workload(
+            approved=True,
+            test_mode='SPRT',
+            elolower=0.0,
+            eloupper=5.0,
+            lowerllr=-2.94,
+            currentllr=0.75,
+            upperllr=2.94,
+            games=20,
+            wins=8,
+            losses=6,
+            draws=6,
+            LL=2,
+            LD=3,
+            DD=4,
+            DW=1,
+            WW=0,
+        )
+        completed = self.make_workload(approved=True, finished=True, passed=True)
+        deleted = self.make_workload(deleted=True)
+
+        response = self.get_tests()
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['query'], { 'status': 'current', 'author': None })
+        self.assertEqual(body['summary'], {
+            'all'       : 4,
+            'current'   : 3,
+            'pending'   : 1,
+            'awaiting'  : 1,
+            'active'    : 1,
+            'completed' : 1,
+        })
+        self.assertEqual(body['pagination']['total'], 3)
+        self.assertFalse(body['pagination']['has_more'])
+        self.assertEqual(
+            {test['id'] for test in body['tests']},
+            {pending.id, awaiting.id, active.id},
+        )
+        self.assertNotIn(completed.id, {test['id'] for test in body['tests']})
+        self.assertNotIn(deleted.id, {test['id'] for test in body['tests']})
+
+        by_id = {test['id']: test for test in body['tests']}
+        self.assertEqual(by_id[pending.id]['status'], 'pending')
+        self.assertEqual(by_id[awaiting.id]['status'], 'awaiting')
+        self.assertEqual(by_id[active.id]['status'], 'active')
+        self.assertEqual(by_id[active.id]['workload_type'], 'test')
+        self.assertEqual(by_id[active.id]['engines']['dev']['branch'], 'feature-branch')
+        self.assertEqual(by_id[active.id]['mode_config']['llr']['current'], 0.75)
+        self.assertEqual(by_id[active.id]['results']['games'], 20)
+        self.assertEqual(by_id[active.id]['results']['pentanomial']['DD'], 4)
+
+    def test_get_can_filter_completed_tests_by_author_and_page(self):
+        first = self.make_workload(approved=True, finished=True)
+        second = self.make_workload(approved=True, finished=True)
+        self.make_workload(author='someone-else', approved=True, finished=True)
+
+        first_page = self.get_tests({
+            'status' : 'completed',
+            'author' : 'Agent-AI',
+            'limit'  : '1',
+            'offset' : '0',
+        })
+        second_page = self.get_tests({
+            'status' : 'completed',
+            'author' : 'Agent-AI',
+            'limit'  : '1',
+            'offset' : '1',
+        })
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(second_page.status_code, 200)
+        self.assertEqual(first_page.json()['summary']['all'], 2)
+        self.assertEqual(first_page.json()['pagination']['total'], 2)
+        self.assertTrue(first_page.json()['pagination']['has_more'])
+        self.assertFalse(second_page.json()['pagination']['has_more'])
+        returned_ids = {
+            first_page.json()['tests'][0]['id'],
+            second_page.json()['tests'][0]['id'],
+        }
+        self.assertEqual(returned_ids, {first.id, second.id})
+        self.assertTrue(all(
+            test['author'] == 'Agent-AI'
+            for test in first_page.json()['tests'] + second_page.json()['tests']))
+
+    def test_get_rejects_invalid_query_parameters(self):
+        invalid_queries = (
+            { 'status': 'running' },
+            { 'limit': 'not-a-number' },
+            { 'limit': '0' },
+            { 'limit': '201' },
+            { 'offset': '-1' },
+        )
+
+        for params in invalid_queries:
+            with self.subTest(params=params):
+                response = self.get_tests(params)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()['error'], 'Invalid query parameter')
+
+    def test_get_requires_enabled_account_password(self):
         response = self.client.get('/api/tests/')
+        self.assertEqual(response.status_code, 401)
+
+        response = self.get_tests(password='wrong-password')
+        self.assertEqual(response.status_code, 401)
+
+        response = self.get_tests(password=self.worker_key.token)
+        self.assertEqual(response.status_code, 401)
+
+        profile = Profile.objects.get(user=self.user)
+        profile.enabled = False
+        profile.save(update_fields=['enabled'])
+        response = self.get_tests()
+        self.assertEqual(response.status_code, 403)
+
+    def test_get_accepts_authenticated_session(self):
+        self.client.login(username='Agent-AI', password='test-api-password')
+        response = self.client.get('/api/tests/')
+        self.assertEqual(response.status_code, 200)
+
+    def test_unsupported_method_returns_allow_header(self):
+        response = self.client.put('/api/tests/')
         self.assertEqual(response.status_code, 405)
-        self.assertEqual(response['Allow'], 'POST')
+        self.assertEqual(response['Allow'], 'GET, POST')
 
     def test_basic_auth_works_for_existing_config_api(self):
         response = self.client.get(

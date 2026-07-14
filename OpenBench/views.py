@@ -45,7 +45,7 @@ from django.contrib.auth.models import User
 from OpenSite.settings import MEDIA_ROOT
 
 from django.db import transaction, IntegrityError
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.http import HttpResponse, JsonResponse, FileResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
@@ -1663,6 +1663,10 @@ TEST_API_REQUIRED_FIELDS = (
     'syzygy_wdl', 'syzygy_adj', 'win_adj', 'draw_adj',
 )
 
+TEST_API_STATUSES = ('current', 'pending', 'awaiting', 'active', 'completed', 'all')
+TEST_API_DEFAULT_LIMIT = 50
+TEST_API_MAX_LIMIT = 200
+
 def api_test_payload(request):
 
     if request.content_type == 'application/json':
@@ -1685,12 +1689,240 @@ def api_test_payload(request):
 
     return normalized, None
 
+def api_test_status(test):
+
+    if test.finished:
+        return 'completed'
+    if test.awaiting:
+        return 'awaiting'
+    if not test.approved:
+        return 'pending'
+    return 'active'
+
+def api_test_engine(test, side):
+
+    engine = getattr(test, side)
+
+    return {
+        'engine'       : getattr(test, side + '_engine'),
+        'repo'         : getattr(test, side + '_repo'),
+        'branch'       : engine.name,
+        'sha'          : engine.sha,
+        'bench'        : engine.bench,
+        'display'      : getattr(test, side + '_display'),
+        'network'      : {
+            'sha256' : getattr(test, side + '_network'),
+            'name'   : getattr(test, side + '_netname'),
+        },
+        'build'        : {
+            'name' : getattr(test, side + '_build_name'),
+            'args' : getattr(test, side + '_build_args'),
+        },
+        'options'      : getattr(test, side + '_options'),
+        'time_control' : getattr(test, side + '_time_control'),
+        'ponder_mode'  : getattr(test, side + '_ponder_mode'),
+    }
+
+def api_test_mode_config(test):
+
+    if test.test_mode == 'SPRT':
+        return {
+            'elo_bounds' : [test.elolower, test.eloupper],
+            'confidence' : {
+                'alpha' : test.alpha,
+                'beta'  : test.beta,
+            },
+            'llr' : {
+                'lower'   : test.lowerllr,
+                'current' : test.currentllr,
+                'upper'   : test.upperllr,
+            },
+        }
+
+    if test.test_mode in ('GAMES', 'DATAGEN'):
+        return { 'max_games' : test.max_games }
+
+    if test.test_mode == 'SPSA':
+        spsa       = test.spsa or {}
+        parameters = spsa.get('parameters', {})
+        progress   = spsa.get('progress', {}) or {}
+
+        return {
+            'wrapper'         : spsa.get('wrapper'),
+            'iterations'      : spsa.get('iterations'),
+            'pairs_per'       : spsa.get('pairs_per'),
+            'total_pairs'     : spsa.get('total_pairs'),
+            'batch_pairs'     : spsa.get('batch_pairs'),
+            'parameter_count' : len(parameters) if isinstance(parameters, dict) else 0,
+            'progress'        : {
+                'completed_pairs'   : progress.get('completed_pairs', 0),
+                'completed_batches' : progress.get('completed_batches', 0),
+                'updated_at'        : progress.get('updated_at'),
+            },
+        }
+
+    return {}
+
+def api_test_to_dict(request, test):
+
+    workload_type = test.workload_type_str()
+
+    return {
+        'id'            : test.id,
+        'url'           : request.build_absolute_uri('/%s/%d/' % (workload_type, test.id)),
+        'author'        : test.author,
+        'status'        : api_test_status(test),
+        'workload_type' : workload_type,
+        'test_mode'     : test.test_mode,
+        'created_at'    : test.creation.isoformat(),
+        'updated_at'    : test.updated.isoformat(),
+        'flags'         : {
+            'approved' : test.approved,
+            'awaiting' : test.awaiting,
+            'finished' : test.finished,
+            'passed'   : test.passed,
+            'failed'   : test.failed,
+            'error'    : test.error,
+        },
+        'engines' : {
+            'dev'  : api_test_engine(test, 'dev'),
+            'base' : api_test_engine(test, 'base'),
+        },
+        'settings' : {
+            'book_name'     : test.book_name,
+            'upload_pgns'   : test.upload_pgns,
+            'priority'      : test.priority,
+            'throughput'    : test.throughput,
+            'workload_size' : test.workload_size,
+            'scale_method'  : test.scale_method,
+            'scale_nps'     : test.scale_nps,
+            'syzygy_wdl'    : test.syzygy_wdl,
+            'syzygy_adj'    : test.syzygy_adj,
+            'win_adj'       : test.win_adj,
+            'draw_adj'      : test.draw_adj,
+        },
+        'mode_config' : api_test_mode_config(test),
+        'results'     : {
+            'games'  : test.games,
+            'wins'   : test.wins,
+            'losses' : test.losses,
+            'draws'  : test.draws,
+            'pentanomial' : {
+                'LL' : test.LL,
+                'LD' : test.LD,
+                'DD' : test.DD,
+                'DW' : test.DW,
+                'WW' : test.WW,
+            },
+        },
+    }
+
+def api_get_tests(request):
+
+    user = api_authenticated_user(request)
+    if user is None:
+        return api_response({ 'error' : 'Invalid API credentials' }, status=401)
+
+    profile = Profile.objects.filter(user=user).first()
+    if profile is None or not profile.enabled:
+        return api_response({ 'error' : 'Only enabled users can view tests' }, status=403)
+
+    status_filter = request.GET.get('status', 'current').strip().lower()
+    if status_filter not in TEST_API_STATUSES:
+        return api_response({
+            'error'   : 'Invalid query parameter',
+            'details' : ['status must be one of: %s' % ', '.join(TEST_API_STATUSES)],
+        }, status=400)
+
+    try:
+        limit  = int(request.GET.get('limit', TEST_API_DEFAULT_LIMIT))
+        offset = int(request.GET.get('offset', 0))
+    except (TypeError, ValueError):
+        return api_response({
+            'error'   : 'Invalid query parameter',
+            'details' : ['limit and offset must be integers'],
+        }, status=400)
+
+    parameter_errors = []
+    if limit < 1 or limit > TEST_API_MAX_LIMIT:
+        parameter_errors.append('limit must be between 1 and %d' % TEST_API_MAX_LIMIT)
+    if offset < 0:
+        parameter_errors.append('offset must be zero or greater')
+    if parameter_errors:
+        return api_response({
+            'error'   : 'Invalid query parameter',
+            'details' : parameter_errors,
+        }, status=400)
+
+    author = request.GET.get('author', '').strip()
+    tests  = Test.objects.exclude(deleted=True)
+    if author:
+        tests = tests.filter(author=author)
+
+    counts = tests.aggregate(
+        all_count       = Count('id'),
+        current_count   = Count('id', filter=Q(finished=False)),
+        pending_count   = Count('id', filter=Q(finished=False, awaiting=False, approved=False)),
+        awaiting_count  = Count('id', filter=Q(finished=False, awaiting=True)),
+        active_count    = Count('id', filter=Q(finished=False, awaiting=False, approved=True)),
+        completed_count = Count('id', filter=Q(finished=True)),
+    )
+
+    if status_filter == 'current':
+        filtered = tests.filter(finished=False)
+    elif status_filter == 'pending':
+        filtered = tests.filter(finished=False, awaiting=False, approved=False)
+    elif status_filter == 'awaiting':
+        filtered = tests.filter(finished=False, awaiting=True)
+    elif status_filter == 'active':
+        filtered = tests.filter(finished=False, awaiting=False, approved=True)
+    elif status_filter == 'completed':
+        filtered = tests.filter(finished=True)
+    else:
+        filtered = tests
+
+    if status_filter == 'active':
+        filtered = filtered.order_by('-priority', '-currentllr', '-creation', '-id')
+    elif status_filter == 'completed':
+        filtered = filtered.order_by('-updated', '-id')
+    else:
+        filtered = filtered.order_by('-creation', '-id')
+
+    total     = filtered.count()
+    workloads = list(filtered.select_related('dev', 'base')[offset:offset + limit])
+
+    return api_response({
+        'query' : {
+            'status' : status_filter,
+            'author' : author or None,
+        },
+        'summary' : {
+            'all'       : counts['all_count'],
+            'current'   : counts['current_count'],
+            'pending'   : counts['pending_count'],
+            'awaiting'  : counts['awaiting_count'],
+            'active'    : counts['active_count'],
+            'completed' : counts['completed_count'],
+        },
+        'pagination' : {
+            'total'    : total,
+            'limit'    : limit,
+            'offset'   : offset,
+            'returned' : len(workloads),
+            'has_more' : offset + len(workloads) < total,
+        },
+        'tests' : [api_test_to_dict(request, test) for test in workloads],
+    })
+
 @csrf_exempt
 def api_tests(request):
 
+    if request.method == 'GET':
+        return api_get_tests(request)
+
     if request.method != 'POST':
-        response = api_response({ 'error' : 'POST requests only' }, status=405)
-        response['Allow'] = 'POST'
+        response = api_response({ 'error' : 'GET or POST requests only' }, status=405)
+        response['Allow'] = 'GET, POST'
         return response
 
     data, error = api_test_payload(request)
