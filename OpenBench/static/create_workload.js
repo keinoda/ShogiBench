@@ -203,6 +203,45 @@ function add_defaults_to_preset(engine, preset, workload_type) {
     return settings;
 }
 
+
+function option_tokens(options) {
+    return options.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+}
+
+
+function option_name(token) {
+    const separator = token.indexOf('=');
+    return (separator == -1 ? token : token.slice(0, separator)).toLowerCase();
+}
+
+
+function merge_required_options(options, required_options) {
+
+    const required = option_tokens(required_options || '');
+    const required_names = new Set(required.map(option_name));
+    const optional = option_tokens(options || '').filter(
+        token => !required_names.has(option_name(token))
+    );
+    return optional.concat(required).join(' ');
+}
+
+
+function apply_required_test_options(workload_type) {
+
+    if (workload_type != 'TEST')
+        return;
+
+    for (const target of ['dev', 'base']) {
+        const engine_field = document.getElementById(target + '_engine');
+        const options_field = document.getElementById(target + '_options');
+        if (!engine_field || !options_field)
+            continue;
+
+        const required = config.engines[engine_field.value].test_required_options || '';
+        options_field.value = merge_required_options(options_field.value, required);
+    }
+}
+
 function set_engine(engine, target) {
 
     document.getElementById(target + '_engine').value = engine;
@@ -331,6 +370,8 @@ function apply_preset(preset, workload_type) {
             retain_specific_options(get_base_engine(), preset, workload_type);
         } catch (error) {}
     }
+
+    apply_required_test_options(workload_type);
 }
 
 function change_engine(engine, target, workload_type) {

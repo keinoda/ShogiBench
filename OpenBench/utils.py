@@ -165,6 +165,35 @@ def extract_option(options, option):
     if match: return match.group()
 
 
+OPTION_TOKEN_PATTERN = re.compile(r'''(?:[^\s"']+|"[^"]*"|'[^']*')+''')
+
+
+def option_tokens(options):
+    return OPTION_TOKEN_PATTERN.findall(options or '')
+
+
+def option_name(token):
+    return token.split('=', 1)[0].lower()
+
+
+def merge_required_options(options, required_options):
+
+    # 必須オプションはユーザー入力やプリセットより優先する。同名判定は
+    # USIオプション名の表記揺れを許容するため大文字小文字を区別しない。
+    required = option_tokens(required_options)
+    required_names = { option_name(token) for token in required }
+    optional = [
+        token for token in option_tokens(options)
+        if option_name(token) not in required_names
+    ]
+    return ' '.join(optional + required)
+
+
+def merge_engine_test_options(engine, options):
+    required = OPENBENCH_CONFIG['engines'][engine]['test_required_options']
+    return merge_required_options(options, required)
+
+
 
 
 def get_pending_tests():

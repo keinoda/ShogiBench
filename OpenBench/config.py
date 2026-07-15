@@ -26,7 +26,7 @@ import traceback
 
 from OpenSite.settings import PROJECT_PATH
 
-OPENBENCH_STATIC_VERSION = 'v8'
+OPENBENCH_STATIC_VERSION = 'v9'
 
 OPENBENCH_CONFIG          = None # Initialized by OpenBench/apps.py
 OPENBENCH_CONFIG_CHECKSUM = None # Initialized by OpenBench/apps.py
@@ -70,6 +70,7 @@ def load_engine_config(engine_name):
         with open(os.path.join(PROJECT_PATH, 'Engines', '%s.json' % (engine_name))) as fin:
             conf = json.load(fin)
 
+        conf.setdefault('test_required_options', '')
         verify_engine_basics(conf)
         verify_engine_build(engine_name, conf)
 
@@ -130,6 +131,7 @@ def verify_engine_basics(conf):
     assert type(conf.get('nps')) == int and conf['nps'] > 0
     assert type(conf.get('source')) == str
     assert type(conf.get('build')) == dict
+    assert type(conf.get('test_required_options')) == str
 
 def verify_engine_build(engine_name, conf):
 

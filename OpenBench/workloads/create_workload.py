@@ -157,7 +157,8 @@ def create_new_test(request):
     test.dev_repo          = request.POST['dev_repo']
     test.dev_display       = request.POST.get('dev_display', '').strip()[:64]
     test.dev_engine        = request.POST['dev_engine']
-    test.dev_options       = request.POST['dev_options']
+    test.dev_options       = OpenBench.utils.merge_engine_test_options(
+        request.POST['dev_engine'], request.POST['dev_options'])
     test.dev_network       = request.POST['dev_network']
     test.dev_time_control  = OpenBench.utils.TimeControl.parse(request.POST['dev_time_control'])
     test.dev_ponder_mode   = request.POST.get('dev_ponder_mode', Test.PonderMode.OFF)
@@ -168,7 +169,8 @@ def create_new_test(request):
     test.base_repo         = request.POST['base_repo']
     test.base_display      = request.POST.get('base_display', '').strip()[:64]
     test.base_engine       = request.POST['base_engine']
-    test.base_options      = request.POST['base_options']
+    test.base_options      = OpenBench.utils.merge_engine_test_options(
+        request.POST['base_engine'], request.POST['base_options'])
     test.base_network      = request.POST['base_network']
     test.base_time_control = OpenBench.utils.TimeControl.parse(request.POST['base_time_control'])
     test.base_ponder_mode  = request.POST.get('base_ponder_mode', Test.PonderMode.OFF)
