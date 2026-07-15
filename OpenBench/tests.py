@@ -38,6 +38,7 @@ from django.test import override_settings
 
 from OpenBench.models import BuildVariant, Engine, LogEvent, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
+from OpenBench.utils import merge_required_options
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
 from OpenBench.workloads.get_workload import game_distribution, valid_hardware_assignment, workload_to_dictionary
 from OpenBench.workloads.verify_workload import collect_github_info
@@ -1090,6 +1091,30 @@ class PonderModeWorkloadTests(TestCase):
         self.assertContains(detail, 'Base Ponder方式')
         self.assertContains(detail, '早期 Ponder')
 
+    def test_required_engine_options_are_merged_on_form_creation(self):
+        response = self.create_test(
+            dev_options='Threads=1 Hash=16 NetworkDelay=999 CustomOption=dev',
+            base_options='Threads=1 Hash=16 networkdelay2=999 CustomOption=base')
+
+        self.assertEqual(response.status_code, 302)
+        test = Test.objects.get(test_mode='GAMES')
+        required = (
+            'USI_OwnBook=false NetworkDelay=0 NetworkDelay2=0 '
+            'MinimumThinkingTime=100 RoundUpToFullSecond=false')
+        self.assertEqual(
+            test.dev_options,
+            'Threads=1 Hash=16 CustomOption=dev ' + required)
+        self.assertEqual(
+            test.base_options,
+            'Threads=1 Hash=16 CustomOption=base ' + required)
+
+    def test_required_option_merge_preserves_quoted_values(self):
+        self.assertEqual(
+            merge_required_options(
+                'Threads=1 networkdelay=999 Label="value with spaces"',
+                'NetworkDelay=0 NetworkDelay2=0'),
+            'Threads=1 Label="value with spaces" NetworkDelay=0 NetworkDelay2=0')
+
     def test_ponder_distribution_reserves_both_engines_on_physical_cores(self):
         self.create_test()
         test = Test.objects.get(test_mode='GAMES')
@@ -1364,6 +1389,24 @@ class TestCreationAPITests(TestCase):
         self.assertEqual(status_response.json()['summary']['pending'], 1)
         self.assertEqual(status_response.json()['tests'][0]['id'], workload.id)
         self.assertEqual(status_response.json()['tests'][0]['status'], 'pending')
+
+    def test_required_engine_options_are_merged_on_api_creation(self):
+        payload = dict(
+            self.payload,
+            dev_options='Threads=1 Hash=16 NetworkDelay2=500',
+            base_options='Threads=1 Hash=16 RoundUpToFullSecond=true')
+        with patch(
+                'OpenBench.workloads.verify_workload.collect_github_info',
+                return_value=(self.github_info(), True)):
+            response = self.post_json(payload)
+
+        self.assertEqual(response.status_code, 201)
+        test = Test.objects.get()
+        required = (
+            'USI_OwnBook=false NetworkDelay=0 NetworkDelay2=0 '
+            'MinimumThinkingTime=100 RoundUpToFullSecond=false')
+        self.assertEqual(test.dev_options, 'Threads=1 Hash=16 ' + required)
+        self.assertEqual(test.base_options, 'Threads=1 Hash=16 ' + required)
 
     def test_form_credentials_can_create_test(self):
         data = dict(
