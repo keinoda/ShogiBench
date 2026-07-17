@@ -556,8 +556,8 @@ td pre {
 .spsa-chart-svg .series {
     fill: none;
     stroke-width: 2;
-    stroke-linejoin: round;
-    stroke-linecap: round;
+    stroke-linejoin: miter;
+    stroke-linecap: butt;
     vector-effect: non-scaling-stroke;
 }
 
