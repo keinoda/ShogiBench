@@ -37,6 +37,7 @@ SPSA_DIR        = 'SPSA'
 REPORT_INTERVAL = 30   # 進捗報告の間隔 (秒)
 POLL_INTERVAL   = 5    # プロセス/停止指示の確認間隔 (秒)
 STOP_GRACE      = 15   # SIGTERM から SIGKILL までの猶予 (秒)
+TRAJECTORY_MAX_ROWS = 512 # 初回・再接続時の1報告が過大にならない上限
 
 
 ## rshogi の spsa バイナリの用意
@@ -217,6 +218,70 @@ def read_stats_totals(stats_csv):
                 continue
 
     return batches, wins, losses, draws
+
+def read_trajectory(run_dir, batch_offset=0, after_batch=-1):
+
+    ## rshogi が batch ごとに出す stats.csv / values.csv を、サーバ保存用の
+    ## コンパクトな配列へ変換する。サーバが受領済みの batch の1つ前から重複送信し、
+    ## サーバ側で batch 番号をキーにマージするため、通信失敗や再起動でも欠けにくい。
+
+    trajectory = { 'names' : [], 'stats' : [], 'values' : [] }
+
+    stats_path = os.path.join(run_dir, 'stats.csv')
+    if os.path.isfile(stats_path):
+        try:
+            with open(stats_path) as fin:
+                header = fin.readline().strip().split(',')
+                indexes = [header.index(name) for name in (
+                    'iteration', 'batch_pairs', 'raw_result',
+                    'avg_abs_update', 'max_abs_update')]
+                rows = []
+                for line in fin:
+                    fields = line.strip().split(',')
+                    if len(fields) <= max(indexes):
+                        continue
+                    try:
+                        rows.append([
+                            batch_offset + int(fields[indexes[0]]),
+                            int(fields[indexes[1]]),
+                            float(fields[indexes[2]]),
+                            float(fields[indexes[3]]),
+                            float(fields[indexes[4]]),
+                        ])
+                    except ValueError:
+                        continue
+                rows = [row for row in rows if row[0] >= max(1, after_batch - 1)]
+                trajectory['stats'] = rows[-TRAJECTORY_MAX_ROWS:]
+        except (OSError, ValueError):
+            pass # 書き込み途中または旧形式なら次の報告で再試行する
+
+    values_path = os.path.join(run_dir, 'values.csv')
+    if os.path.isfile(values_path):
+        try:
+            with open(values_path) as fin:
+                header = fin.readline().strip().split(',')
+                if len(header) < 2 or header[0] != 'iteration':
+                    return trajectory
+                names = header[1:]
+                rows  = []
+                for line in fin:
+                    fields = line.strip().split(',')
+                    if len(fields) != len(header):
+                        continue
+                    try:
+                        rows.append([
+                            batch_offset + int(fields[0]),
+                            [float(value) for value in fields[1:]],
+                        ])
+                    except ValueError:
+                        continue
+                rows = [row for row in rows if row[0] >= max(0, after_batch - 1)]
+                trajectory['names']  = names
+                trajectory['values'] = rows[-TRAJECTORY_MAX_ROWS:]
+        except OSError:
+            pass # 書き込み途中なら次の報告で再試行する
+
+    return trajectory
 
 def read_run_progress(run_dir):
 
@@ -562,6 +627,8 @@ def read_log_tail(log_path, lines=40, max_bytes=16384):
 def report_progress(config, reporter, run_dir, offsets, finished):
 
     progress = read_run_progress(run_dir)
+    after_batch = int(config.workload['spsa'].get('trajectory_batch', -1))
+    trajectory  = read_trajectory(run_dir, offsets['batches'], after_batch)
 
     payload = {
         'test_id'             : config.workload['test'  ]['id'],
@@ -578,11 +645,20 @@ def report_progress(config, reporter, run_dir, offsets, finished):
         'last_avg_abs_update' : progress['last_avg_abs_update'],
         'state_params'        : progress['state_params'],
 
+        # JSON 配列を3項目に分ける。values は名前を1回だけ持つ wide 形式なので、
+        # 148パラメータでも1報告あたりの通信量を抑えられる。
+        'trajectory_names'    : json.dumps(trajectory['names'], separators=(',', ':')),
+        'trajectory_stats'    : json.dumps(trajectory['stats'], separators=(',', ':')),
+        'trajectory_values'   : json.dumps(trajectory['values'], separators=(',', ':')),
+
         'finished'            : '1' if finished else '0',
         'final_params'        : progress['final_params'] if finished else '',
     }
 
-    return reporter.report(config, 'clientSubmitSpsa', payload).json()
+    response = reporter.report(config, 'clientSubmitSpsa', payload).json()
+    if 'trajectory_batch' in response:
+        config.workload['spsa']['trajectory_batch'] = int(response['trajectory_batch'])
+    return response
 
 
 ## 古い SPSA 状態の掃除 (worker.py の cleanup_client から呼ばれる)

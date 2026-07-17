@@ -711,6 +711,103 @@ def update_test(request, machine):
     return [{}, { 'stop' : True }][test.finished]
 
 
+def _spsa_trajectory_payload(request, key):
+
+    ## 認証済みワーカーからでも、巨大・非数の JSON を Test.spsa に入れない。
+    ## 壊れた報告は現在値の更新を妨げず、次の30秒報告で再送させる。
+
+    raw = request.POST.get(key, '')
+    if not raw or len(raw) > 2_000_000:
+        return []
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, list) else []
+    except (TypeError, ValueError):
+        return []
+
+def _merge_spsa_trajectory(spsa, request, completed_batches, state_params):
+
+    parameters = spsa.get('parameters', {})
+    names = [name for name, param in sorted(
+        parameters.items(), key=lambda item: item[1].get('index', 0))]
+    total_batches = (spsa.get('total_pairs', 0) + spsa.get('batch_pairs', 1) - 1) \
+                        // max(1, spsa.get('batch_pairs', 1))
+
+    previous = spsa.get('trajectory', {}) or {}
+    if previous.get('names') != names:
+        previous = {
+            'names'  : names,
+            'stats'  : [],
+            'values' : [[0, [parameters[name]['start'] for name in names]]],
+        }
+
+    def finite_number(value):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+    stats_by_batch = {
+        int(row[0]) : row for row in previous.get('stats', [])
+        if isinstance(row, list) and len(row) == 5 and isinstance(row[0], int)
+    }
+    values_by_batch = {
+        int(row[0]) : row for row in previous.get('values', [])
+        if isinstance(row, list) and len(row) == 2 and isinstance(row[0], int)
+    }
+
+    incoming_names = _spsa_trajectory_payload(request, 'trajectory_names')
+    incoming_stats = _spsa_trajectory_payload(request, 'trajectory_stats')
+    incoming_values = _spsa_trajectory_payload(request, 'trajectory_values')
+
+    for row in incoming_stats[-512:]:
+        if not isinstance(row, list) or len(row) != 5:
+            continue
+        batch, batch_pairs, raw_result, avg_update, max_update = row
+        if not isinstance(batch, int) or not 1 <= batch <= total_batches:
+            continue
+        if not isinstance(batch_pairs, int) or batch_pairs <= 0:
+            continue
+        if not all(finite_number(value) for value in (raw_result, avg_update, max_update)):
+            continue
+        if abs(raw_result) > batch_pairs or avg_update < 0 or max_update < 0:
+            continue
+        stats_by_batch[batch] = [batch, batch_pairs, round(raw_result, 6),
+                                 round(avg_update, 6), round(max_update, 6)]
+
+    if incoming_names == names:
+        for row in incoming_values[-512:]:
+            if not isinstance(row, list) or len(row) != 2:
+                continue
+            batch, values = row
+            if not isinstance(batch, int) or not 0 <= batch <= total_batches:
+                continue
+            if not isinstance(values, list) or len(values) != len(names):
+                continue
+            if not all(finite_number(value) for value in values):
+                continue
+            values_by_batch[batch] = [batch, [round(float(value), 6) for value in values]]
+
+    # 旧ワーカーも最低限グラフ化できるよう、通常の進捗報告から疎な点を補う。
+    # 新ワーカーの同一batchデータがあれば、その完全なCSV行で上書きされている。
+    if completed_batches > 0:
+        raw_result = float(request.POST.get('last_raw_result', 0.0))
+        avg_update = float(request.POST.get('last_avg_abs_update', 0.0))
+        if completed_batches not in stats_by_batch and finite_number(raw_result) and finite_number(avg_update):
+            stats_by_batch[completed_batches] = [
+                completed_batches, spsa.get('batch_pairs', 1),
+                round(raw_result, 6), round(avg_update, 6), None]
+
+        current = OpenBench.spsa_params.parse_state_params_text(state_params) if state_params else {}
+        if all(name in current and finite_number(current[name]) for name in names):
+            values_by_batch[completed_batches] = [
+                completed_batches, [round(float(current[name]), 6) for name in names]]
+
+    trajectory = {
+        'names'  : names,
+        'stats'  : [stats_by_batch[key] for key in sorted(stats_by_batch) if key <= total_batches],
+        'values' : [values_by_batch[key] for key in sorted(values_by_batch) if key <= total_batches],
+    }
+    spsa['trajectory'] = trajectory
+    return max([row[0] for row in trajectory['values']] + [0])
+
 def update_spsa_workload(request, machine):
 
     ## rshogi の spsa を回しているワーカーからの進捗報告。1 つの SPSA ワークロード
@@ -764,6 +861,9 @@ def update_spsa_workload(request, machine):
                     spsa['parameters'][name]['value'] = value
             spsa['state_params'] = state_params
 
+        trajectory_batch = _merge_spsa_trajectory(
+            spsa, request, completed_batches, state_params)
+
         spsa['progress'] = {
             'completed_pairs'     : completed_pairs,
             'completed_batches'   : completed_batches,
@@ -802,4 +902,7 @@ def update_spsa_workload(request, machine):
         updated=timezone.now()
     )
 
-    return [{}, { 'stop' : True }][test.finished]
+    response = { 'trajectory_batch' : trajectory_batch }
+    if test.finished:
+        response['stop'] = True
+    return response

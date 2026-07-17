@@ -311,6 +311,34 @@ def spsa_progress(workload):
         'has_final'           : bool(spsa.get('final_params')),
     }
 
+def spsa_trajectory(workload):
+
+    ## json_script へ渡す、描画に必要な最小データ。パラメータ名は values.csv の
+    ## 列順と一致し、definition は [start, min, max, active] の順。
+
+    if not spsa_is_rshogi(workload):
+        return {}
+
+    spsa       = workload.spsa
+    trajectory = spsa.get('trajectory', {}) or {}
+    names      = trajectory.get('names', [])
+    parameters = spsa.get('parameters', {})
+
+    if not names or any(name not in parameters for name in names):
+        return {}
+
+    return {
+        'names'       : names,
+        'definitions' : [[parameters[name]['start'], parameters[name]['min'],
+                          parameters[name]['max'], not parameters[name].get('not_used')]
+                         for name in names],
+        'stats'        : trajectory.get('stats', []),
+        'values'       : trajectory.get('values', []),
+        'total_batches': (spsa.get('total_pairs', 0) + spsa.get('batch_pairs', 1) - 1)
+                            // max(1, spsa.get('batch_pairs', 1)),
+        'window'       : 16,
+    }
+
 def spsa_param_digest(workload):
 
     if spsa_is_rshogi(workload):
@@ -496,6 +524,7 @@ def test_is_fischer(test):
 
 register.filter('spsa_is_rshogi', spsa_is_rshogi)
 register.filter('spsa_progress', spsa_progress)
+register.filter('spsa_trajectory', spsa_trajectory)
 register.filter('spsa_param_digest', spsa_param_digest)
 register.filter('spsa_param_digest_headers', spsa_param_digest_headers)
 register.filter('spsa_original_input', spsa_original_input)

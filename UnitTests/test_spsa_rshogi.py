@@ -180,6 +180,12 @@ class RunDirProgressTests(unittest.TestCase):
         with open(os.path.join(run_dir, 'state.params'), 'w') as fout:
             fout.write('Foo,int,105.500000,50,200,10,0.002\n')
 
+        with open(os.path.join(run_dir, 'values.csv'), 'w') as fout:
+            fout.write('iteration,Foo\n')
+            fout.write('0,100.000000\n')
+            fout.write('1,103.000000\n')
+            fout.write('2,105.500000\n')
+
     def test_read_stats_totals(self):
 
         with tempfile.TemporaryDirectory() as temp:
@@ -208,6 +214,17 @@ class RunDirProgressTests(unittest.TestCase):
             progress = self.mod.read_run_progress(temp)
             self.assertEqual(progress['completed_pairs'], 0)
             self.assertEqual(progress['state_params'], '')
+
+    def test_read_trajectory_uses_server_batch_and_offset(self):
+
+        with tempfile.TemporaryDirectory() as temp:
+            self.write_run_dir(temp)
+            trajectory = self.mod.read_trajectory(temp, batch_offset=10, after_batch=11)
+
+            self.assertEqual(trajectory['names'], ['Foo'])
+            self.assertEqual([row[0] for row in trajectory['stats']], [11, 12])
+            self.assertEqual([row[0] for row in trajectory['values']], [10, 11, 12])
+            self.assertEqual(trajectory['values'][-1][1], [105.5])
 
 
 class LaunchModeTests(unittest.TestCase):

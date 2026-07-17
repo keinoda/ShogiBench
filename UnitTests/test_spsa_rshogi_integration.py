@@ -35,6 +35,13 @@ cat > "$RUN_DIR/state.params" <<EOF
 Foo,int,105.500000,50,200,10,0.002
 EOF
 
+cat > "$RUN_DIR/values.csv" <<EOF
+iteration,Foo
+0,100.000000
+1,103.000000
+2,105.500000
+EOF
+
 cat > "$RUN_DIR/meta.json" <<EOF
 { "format_version": 4, "completed_iterations": 2, "completed_pairs": 8,
   "total_pairs": 8, "batch_pairs": 4, "total_games": 16,
@@ -67,7 +74,7 @@ class FakeReporter:
     def report(self, config, endpoint, payload, files=None):
         assert endpoint == 'clientSubmitSpsa'
         self.payloads.append(dict(payload))
-        return FakeResponse({})
+        return FakeResponse({ 'trajectory_batch' : 2 })
 
     def report_engine_error(self, config, error, logs=None):
         self.errors.append((error, logs))
@@ -183,6 +190,10 @@ class SpsaRunWorkloadTests(unittest.TestCase):
         self.assertEqual(final['losses'], 7)
         self.assertEqual(final['draws'], 2)
         self.assertIn('Foo,int,105.500000', final['state_params'])
+        self.assertEqual(json.loads(final['trajectory_names']), ['Foo'])
+        self.assertEqual([row[0] for row in json.loads(final['trajectory_stats'])], [1, 2])
+        self.assertEqual([row[0] for row in json.loads(final['trajectory_values'])], [1, 2])
+        self.assertEqual(config.workload['spsa']['trajectory_batch'], 2)
         self.assertEqual(reporter.errors, [])
 
     def test_takeover_offsets_are_added(self):

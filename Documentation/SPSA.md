@@ -121,6 +121,14 @@ old_param, int, 10, 0, 20, 1, 0.0020 [[NOT USED]]
 - 「現在値 (.params) をコピー」: 実行中の state.params (7 カラム形式)
 - 完走後は「final.params をコピー」: そのまま `tune.py apply` の入力に使える
   (state.params ではなく final.params を使うこと)
+- **SPSA 進行方向グラフ**:
+  - `raw_result / batch_pairs` と16 batch移動平均。0付近を行き来しているか、
+    一方向への偏りがないかを見る
+  - 全パラメータを同じ単位で重ねず、可動範囲 `(max-min)` で正規化したうえで、
+    初期値から最も動いたactiveパラメータ8件を表示する。正は増加、負は減少。
+    RMS距離とbatch間step RMSも併記し、更新の急拡大を検出できるようにする
+  - rshogi の `stats.csv` / `values.csv` をbatch番号で増分保存する。通信失敗時は
+    直前batchを重ねて再送し、サーバ側で置換するため二重計上しない
 
 ## 停止・再開・引き継ぎ
 

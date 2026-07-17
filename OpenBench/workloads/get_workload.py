@@ -378,6 +378,10 @@ def spsa_to_dictionary(test, machine):
 
     spsa     = test.spsa
     progress = spsa.get('progress', {}) or {}
+    trajectory = spsa.get('trajectory', {}) or {}
+    trajectory_batch = max(
+        [row[0] for row in trajectory.get('values', [])
+         if isinstance(row, list) and row and isinstance(row[0], int)] + [0])
 
     # 1 batch で並列実行できる対局数は 2 × batch_pairs が上限 (rshogi の仕様)
     engine_threads = int(OpenBench.utils.extract_option(test.dev_options, 'Threads') or 1)
@@ -400,6 +404,7 @@ def spsa_to_dictionary(test, machine):
 
         'params_text'  : spsa['params_text'],
         'state_params' : spsa.get('state_params', ''),
+        'trajectory_batch' : trajectory_batch,
         'concurrency'  : concurrency,
 
         'carry' : {

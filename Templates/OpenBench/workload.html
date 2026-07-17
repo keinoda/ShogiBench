@@ -5,6 +5,7 @@
 
 {% block scripts %}
     <script src="{% static 'copy_text.js' %}?{{ static_version }}"></script>
+    <script src="{% static 'spsa_trajectory.js' %}?{{ static_version }}"></script>
 {% endblock %}
 
 {% block content %}
@@ -253,6 +254,17 @@
                     <pre class="long-statblock" style="margin: 0;">ワーカーの割り当てを待っています。SPSA は 1 台のワーカーが専有して rshogi の spsa を実行します。</pre>
                 {% endif %}
             </div>
+        {% endwith %}
+
+        {% with trajectory=workload|spsa_trajectory %}
+            {% if trajectory.stats or trajectory.values %}
+                <section id="spsa-trajectory" class="w-100 mt-3" aria-labelledby="spsa-trajectory-heading">
+                    <h3 id="spsa-trajectory-heading">SPSA 進行方向</h3>
+                    <div id="spsa-score-chart"></div>
+                    <div id="spsa-parameter-chart" class="mt-3"></div>
+                </section>
+                {{ trajectory|json_script:"spsa-trajectory-data" }}
+            {% endif %}
         {% endwith %}
     {% endif %}
 

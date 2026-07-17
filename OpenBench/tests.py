@@ -2017,6 +2017,8 @@ class SpsaRshogiLifecycleTests(TestCase):
         state = ('SPSA_LMR_BASE_QUIET,int,190.500000,90,362,14,0.002\n'
                  'SPSA_NMP_MARGIN_OFFSET,int,-400.000000,-780,-195,30,0.002\n'
                  'DeadParam,int,10.000000,0,20,1,0.002\n')
+        trajectory_names = [
+            'SPSA_LMR_BASE_QUIET', 'SPSA_NMP_MARGIN_OFFSET', 'DeadParam']
 
         response = self.client.post('/clientSubmitSpsa/', {
             'machine_id'          : machine.id,
@@ -2032,10 +2034,17 @@ class SpsaRshogiLifecycleTests(TestCase):
             'last_raw_result'     : '+2.000',
             'last_avg_abs_update' : '0.0125',
             'state_params'        : state,
+            'trajectory_names'    : json.dumps(trajectory_names),
+            'trajectory_stats'    : json.dumps([
+                [1, 96, 4.0, 0.02, 1.0], [2, 96, 2.0, 0.0125, 0.8]]),
+            'trajectory_values'   : json.dumps([
+                [0, [180.0, -390.0, 10.0]],
+                [1, [185.0, -395.0, 10.0]],
+                [2, [190.5, -400.0, 10.0]]]),
             'finished'            : '0',
         }).json()
 
-        self.assertEqual(response, {})
+        self.assertEqual(response, { 'trajectory_batch' : 2 })
 
         test.refresh_from_db()
         self.assertEqual(test.games, 384)
@@ -2044,6 +2053,9 @@ class SpsaRshogiLifecycleTests(TestCase):
         self.assertEqual(test.spsa['progress']['machine_id'], machine.id)
         self.assertEqual(test.spsa['parameters']['SPSA_LMR_BASE_QUIET']['value'], 190.5)
         self.assertEqual(test.spsa['state_params'], state)
+        self.assertEqual(test.spsa['trajectory']['names'], trajectory_names)
+        self.assertEqual(len(test.spsa['trajectory']['stats']), 2)
+        self.assertEqual([row[0] for row in test.spsa['trajectory']['values']], [0, 1, 2])
 
         # Result / Profile は寄与分だけ加算される
         from OpenBench.models import Result
@@ -2071,7 +2083,7 @@ class SpsaRshogiLifecycleTests(TestCase):
             'final_params'    : final,
         }).json()
 
-        self.assertEqual(response, { 'stop' : True })
+        self.assertEqual(response, { 'trajectory_batch' : 534, 'stop' : True })
 
         test.refresh_from_db()
         self.assertTrue(test.finished)
@@ -2193,6 +2205,9 @@ class SpsaRshogiLifecycleTests(TestCase):
         response = self.client.get('/tune/%d/' % (test.id))
         self.assertContains(response, '190.5000')
         self.assertContains(response, '消化 384 局')
+        self.assertContains(response, 'SPSA 進行方向')
+        self.assertContains(response, 'spsa-trajectory-data')
+        self.assertContains(response, 'spsa_trajectory.js')
 
         # 一覧ページも壊れない
         response = self.client.get('/index/')
