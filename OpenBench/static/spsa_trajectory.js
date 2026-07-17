@@ -21,9 +21,9 @@
         return node;
     }
 
-    function linePath(points, xScale, yScale) {
-        return points.map((point, index) =>
-            `${index ? 'L' : 'M'}${xScale(point[0]).toFixed(2)},${yScale(point[1]).toFixed(2)}`
+    function polylinePoints(points, xScale, yScale) {
+        return points.map(point =>
+            `${xScale(point[0]).toFixed(2)},${yScale(point[1]).toFixed(2)}`
         ).join(' ');
     }
 
@@ -68,11 +68,17 @@
         series.forEach(item => {
             if (!item.points.length)
                 return;
-            svg.appendChild(element('path', {
+            svg.appendChild(element('polyline', {
                 class: `series ${item.className || ''}`,
-                d: linePath(item.points, xScale, yScale),
+                points: polylinePoints(item.points, xScale, yScale),
                 stroke: item.color,
             }));
+            if (item.markers) {
+                item.points.forEach(point => svg.appendChild(element('circle', {
+                    class: 'series-point', cx: xScale(point[0]), cy: yScale(point[1]),
+                    r: 2.2, fill: item.color,
+                })));
+            }
         });
         container.appendChild(svg);
     }
@@ -127,6 +133,7 @@
             value: item.value,
             color: COLORS[colorIndex],
             points: normalizedRows.map(row => [row[0], row[1][item.index]]),
+            markers: true,
         }));
         const yMax = Math.max(0.5, ...series.flatMap(item => item.points.map(point => Math.abs(point[1]))));
         const xMax = Math.max(data.total_batches, ...normalizedRows.map(row => row[0]));

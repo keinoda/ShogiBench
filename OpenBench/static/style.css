@@ -561,6 +561,12 @@ td pre {
     vector-effect: non-scaling-stroke;
 }
 
+.spsa-chart-svg .series-point {
+    stroke: var(--color2);
+    stroke-width: 0.8;
+    vector-effect: non-scaling-stroke;
+}
+
 .spsa-chart-svg .raw-series {
     stroke: #949BA4;
     stroke-width: 1;
