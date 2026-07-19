@@ -56,7 +56,7 @@
                         <select id="opening-book" name="opening-book">
                             <option value="" selected>All Books</option>
                             {% for name, data in config.books.items %}
-                                <option value="{{name}}">{{name}}</option>
+                                <option value="{{name}}">{{data.display|default:name}}</option>
                             {% endfor %}
                         </select><br>
                     </div>

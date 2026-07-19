@@ -305,7 +305,7 @@
                     <label for="book_name"> 開始局面集 </label> <select id="book_name" name="book_name">
                     <option selected value="NONE"> None </option>
                     {% for name, data in config.books.items %}
-                        <option value="{{ name }}">{{ name }}</option>
+                        <option value="{{ name }}">{{ data.display|default:name }}</option>
                     {% endfor %}
                     </select>
                 </div>

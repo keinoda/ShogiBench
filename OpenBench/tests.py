@@ -1704,6 +1704,14 @@ class StatBlockTests(TestCase):
 
         self.assertNotIn('Ptnml', block)
 
+    def test_long_statblock_expands_peta_book_parameters(self):
+        block = longStatBlock(self.make_test(
+            book_name='peta1204_d8d10_32to80_shogi.epd'))
+
+        self.assertIn(
+            'Book     : peta1204_depth8_diff10_32to80_shogi.epd', block)
+        self.assertNotIn('Book     : peta1204_d8d10_32to80_shogi.epd', block)
+
 class SSHTargetParsingTests(TestCase):
 
     def test_vastai_connect_string(self):

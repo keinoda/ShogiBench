@@ -145,7 +145,7 @@ def longStatBlock(test):
         'Score for: %s' % (branch_name('dev')),
         'Elo      : %0.2f +- %0.2f (95%%)' % (elo, max(upper - elo, elo - lower)),
         '%-8s : %s' % (type_text, match_settings()),
-        'Book     : %s' % (discord_text(test.book_name)),
+        'Book     : %s' % (discord_text(book_display_name(test))),
     ]
 
     if test.test_mode == 'SPRT':
@@ -458,6 +458,10 @@ def book_download_link(workload):
     if workload.book_name in OpenBench.config.OPENBENCH_CONFIG['books']:
         return OpenBench.config.OPENBENCH_CONFIG['books'][workload.book_name]['source']
 
+def book_display_name(workload):
+    book = OpenBench.config.OPENBENCH_CONFIG['books'].get(workload.book_name, {})
+    return book.get('display', workload.book_name)
+
 def network_download_link(workload, branch):
 
     assert branch in [ 'dev', 'base' ]
@@ -525,6 +529,7 @@ register.filter('spsa_original_input', spsa_original_input)
 register.filter('spsa_optimal_values', spsa_optimal_values)
 
 register.filter('book_download_link', book_download_link)
+register.filter('book_display_name', book_display_name)
 register.filter('network_download_link', network_download_link)
 
 register.filter('workload_url', workload_url)

@@ -51,9 +51,9 @@
             {% endif %}
 
             {% if workload|book_download_link %}
-                <tr><td class="td-label">開始局面集</td><td><a href="{{workload|book_download_link}}">{{workload.book_name}}</a></td></tr>
+                <tr><td class="td-label">開始局面集</td><td><a href="{{workload|book_download_link}}">{{workload|book_display_name}}</a></td></tr>
             {% else %}
-                <tr><td class="td-label">開始局面集</td><td><a>{{workload.book_name}}</a></td></tr>
+                <tr><td class="td-label">開始局面集</td><td><a>{{workload|book_display_name}}</a></td></tr>
             {% endif %}
 
             <tr><td class="td-label">棋譜保存</td><td>{{workload.upload_pgns}}</td></tr>

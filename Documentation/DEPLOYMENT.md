@@ -476,18 +476,19 @@ sha256 を検証します。いずれも shogitest が読める「1行1局面の
 | `yaneuraou2025_ply32_shogi_sfen.epd` | 26,209 | 同上(32手目) |
 | `dlshogi_gokaku_sfen.epd` | 5,233 | 山岡忠夫氏(dlshogi)の互角局面集(36手目)。floodgate R3800+ から抽出 |
 | `dlshogi_floodgate32to80_sfen.epd` | 8,071 | 同氏の中盤互角局面集(32〜80手目、評価値±150以内)。中盤力の測定向け |
-| `peta1204_d8d10_32to80_shogi.epd` | 29,998 | peta1204 YBBから作成した中盤退出可能局面集。最短32〜80手、評価差10以内、depth閾値8、最善評価値の絶対値100未満 |
+| `peta1204_depth8_diff10_32to80_shogi.epd` | 29,998 | peta1204 YBBから作成した中盤退出可能局面集。最短32〜80手、評価差10以内、depth閾値8、最善評価値の絶対値100未満 |
 | `4moves/6moves_v1_shogi_sfen.epd` | - | 旧来の浅い局面集(互換用に残置) |
 
 - 「startpos moves ...」形式の原本は python-shogi で局面を再生して
   SFEN化しています(重複局面=合流は原本どおり保持)
 - 原本より局面数がわずかに少ないのは、**手番側に王手がかかっている
   局面を除外**しているため(shogitest は王手つき開始局面を扱えない)
-- `peta1204_d8d10_32to80_shogi.epd` は、良い手を最善手との評価差10以内とし、
+- `peta1204_depth8_diff10_32to80_shogi.epd` は、良い手を最善手との評価差10以内とし、
   depth 8未満の良い手で定跡を退出し得る親局面を候補にしたものです。候補の
   最短手数分布を保ち、τ=5の退出質量の平方根で重み付けして30,000局面へ
   縮約後、王手つきの2局面を除外しています。外部エンジンでの再評価は
-  行っていません
+  行っていません。既存テストとの互換性のため、内部の配布IDは
+  `peta1204_d8d10_32to80_shogi.epd` のまま維持しています
 - 出典: たややん氏(@tayayan_ts)、やねうら王
   (github.com/yaneurao/YaneuraOu Releases "BalancedPositions2025")、
   山岡忠夫氏(tadaoyamaoka.hatenablog.com)。再配布にあたっては各氏の
