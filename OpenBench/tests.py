@@ -848,8 +848,19 @@ class DisplayNameTests(TestCase):
         test.dev_options = test.base_options = 'Threads=1 Hash=64'
         test.dev_time_control = test.base_time_control = '8.0+0.08'
         block = longStatBlock(test)
-        self.assertIn('新探索 vs 旧探索', block)
-        self.assertIn('Score for: 新探索', block)
+        self.assertIn('新探索-dev vs 旧探索-base', block)
+        self.assertIn('Score for: 新探索-dev', block)
+
+    def test_stat_block_does_not_duplicate_role_suffixes(self):
+        from OpenBench.templatetags.mytags import longStatBlock
+        test = self.make_test(dev_display='新探索-dev', base_display='旧探索-base')
+        test.dev_options = test.base_options = 'Threads=1 Hash=64'
+        test.dev_time_control = test.base_time_control = '8.0+0.08'
+        block = longStatBlock(test)
+
+        self.assertIn('新探索-dev vs 旧探索-base', block)
+        self.assertNotIn('-dev-dev', block)
+        self.assertNotIn('-base-base', block)
 
     def test_fallback_without_display_names(self):
         from OpenBench.templatetags.mytags import git_diff_text, prettyDevName
@@ -1663,14 +1674,14 @@ class StatBlockTests(TestCase):
     def test_long_statblock_includes_conditions_and_dev_perspective(self):
         block = longStatBlock(self.make_test())
 
-        self.assertTrue(block.startswith('```text\nSuisho11 vs fuuppi-v3'))
+        self.assertTrue(block.startswith('```text\nSuisho11-dev vs fuuppi-v3-base'))
         self.assertTrue(block.endswith('\n```'))
-        self.assertIn('Score for: Suisho11', block)
-        self.assertIn('STRONGER : fuuppi-v3 (+65.92 Elo)', block)
+        self.assertIn('Score for: Suisho11-dev', block)
+        self.assertNotIn('STRONGER', block)
         self.assertIn('SPRT     : 10.0+0.10s, Threads=4, Hash=256MB', block)
         self.assertIn('Book     : yaneuraou2025_ply24_shogi_sfen.epd', block)
         self.assertIn('Games    : N=48 W=18 L=27 D=3', block)
-        self.assertNotIn('Penta |', block)
+        self.assertIn('Ptnml    : [7, 1, 12, 2, 2]', block)
         self.assertNotIn('Dev    |', block)
         self.assertNotIn('Base   |', block)
         self.assertNotIn('Options|', block)
@@ -1687,6 +1698,11 @@ class StatBlockTests(TestCase):
         self.assertIn(
             'Dev 10.0+0.10s T=4 H=256MB / Base 5.0+0.05s T=2 H=128MB',
             block)
+
+    def test_long_statblock_omits_pentanomial_for_trinomial_test(self):
+        block = longStatBlock(self.make_test(use_penta=False, use_tri=True))
+
+        self.assertNotIn('Ptnml', block)
 
 class SSHTargetParsingTests(TestCase):
 

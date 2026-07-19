@@ -116,7 +116,9 @@ def longStatBlock(test):
         display = getattr(test, '%s_display' % branch)
         netname = getattr(test, '%s_netname' % branch)
         engine  = getattr(test, branch)
-        return discord_text(display or netname or prettyName(engine.name))
+        name    = discord_text(display or netname or prettyName(engine.name))
+        suffix  = '-%s' % branch
+        return name if name.lower().endswith(suffix) else name + suffix
 
     def match_settings():
         dev_tc      = timecontrol_text(test.dev_time_control)
@@ -133,15 +135,6 @@ def longStatBlock(test):
         return 'Dev %s T=%s H=%sMB / Base %s T=%s H=%sMB' % (
             dev_tc, dev_threads, dev_hash, base_tc, base_threads, base_hash)
 
-    def stronger_text(elo):
-        if test.games == 0:
-            return 'No games yet'
-        if elo > 0:
-            return '%s (+%0.2f Elo)' % (branch_name('dev'), abs(elo))
-        if elo < 0:
-            return '%s (+%0.2f Elo)' % (branch_name('base'), abs(elo))
-        return 'Even'
-
     type_text = 'SPRT' if test.test_mode == 'SPRT' else 'Conf'
 
     lower, elo, upper = OpenBench.stats.Elo(test.results())
@@ -150,7 +143,6 @@ def longStatBlock(test):
         '```text',
         '%s vs %s' % (branch_name('dev'), branch_name('base')),
         'Score for: %s' % (branch_name('dev')),
-        'STRONGER : %s' % (stronger_text(elo)),
         'Elo      : %0.2f +- %0.2f (95%%)' % (elo, max(upper - elo, elo - lower)),
         '%-8s : %s' % (type_text, match_settings()),
         'Book     : %s' % (discord_text(test.book_name)),
@@ -161,6 +153,8 @@ def longStatBlock(test):
             test.currentllr, test.lowerllr, test.upperllr, test.elolower, test.eloupper))
 
     lines.append('Games    : N=%d W=%d L=%d D=%d' % test.as_nwld())
+    if test.use_penta:
+        lines.append('Ptnml    : [%d, %d, %d, %d, %d]' % test.as_penta())
     lines.append('```')
 
     return '\n'.join(lines)
