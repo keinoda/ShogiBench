@@ -1,0 +1,5 @@
+{
+    "sha"     : "fc316cca8881fee91cb1b6737915aa80bfa670319f41e127ea21a3dc0535b929",
+    "source"  : "https://raw.githubusercontent.com/keinoda/ShogiBench/shogi/Books/dist/peta1204_d8d25_32to80_shogi.epd.zip",
+    "display" : "peta1204_depth8_diff25_32to80_shogi.epd"
+}
