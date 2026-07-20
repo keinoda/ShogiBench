@@ -25,8 +25,8 @@ import threading
 import time
 import traceback
 
+from OpenBench.pgn_archive import archive_path
 from OpenBench.models import PGN
-from OpenSite.settings import MEDIA_ROOT
 
 from django.db import transaction, OperationalError
 from django.core.files.base import ContentFile
@@ -40,20 +40,26 @@ class PGNWatcher(threading.Thread):
 
     def process_pgn(self, pgn):
 
-        tar_path = FileSystemStorage(os.path.join(MEDIA_ROOT, 'PGNs')).path('%d.pgn.tar' % (pgn.test_id))
-        pgn_path = FileSystemStorage().path(pgn.filename())
-
         with transaction.atomic():
+
+            # 同じ差分の再送や複数workerからの処理が重なっても二重追加しない。
+            pgn = PGN.objects.select_for_update().get(pk=pgn.pk)
+            if pgn.processed:
+                return
+
+            tar_path = archive_path(pgn.test_id)
+            pgn_path = FileSystemStorage().path(pgn.filename())
 
             # Ensure Media/PGNs exists
             dir_name = os.path.dirname(tar_path)
-            if not os.path.exists(dir_name):
-                os.makedirs(dir_name)
+            os.makedirs(dir_name, exist_ok=True)
 
             # First PGN will create the initial .tar file
             mode = 'a' if os.path.exists(tar_path) else 'w'
             with tarfile.open(tar_path, mode) as tar:
-                tar.add(pgn_path, arcname=pgn.filename())
+                # tar追記後・DB更新前に落ちた場合も、同じメンバーを増やさない。
+                if pgn.filename() not in tar.getnames():
+                    tar.add(pgn_path, arcname=pgn.filename())
 
             # Delete the raw .pgn.bz2 file, and don't process it again
             FileSystemStorage().delete(pgn.filename())

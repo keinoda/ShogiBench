@@ -25,11 +25,14 @@ from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 
 import base64
+import bz2
 import hashlib
 import io
 import json
 import os
+import tarfile
 import tempfile
+import threading
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -915,6 +918,153 @@ class WorkloadPermissionTests(TestCase):
         self.assertTrue(self.refresh().approved)
         client.post('/test/%d/STOP/' % (self.test.id))
         self.assertTrue(self.refresh().finished)
+
+    def test_author_can_edit_display_names_without_changing_test_conditions(self):
+        self.test.dev_display      = '変更前 Dev'
+        self.test.base_display     = '変更前 Base'
+        self.test.dev_options      = 'Threads=1 Hash=64'
+        self.test.base_options     = 'Threads=1 Hash=64'
+        self.test.book_name        = 'original.epd'
+        self.test.upload_pgns      = 'COMPACT'
+        self.test.dev_time_control = '8.0+0.08'
+        self.test.save()
+
+        self.client.post('/test/%d/MODIFY/' % self.test.id, {
+            'dev_display'     : '  新しい Dev 表示名  ',
+            'base_display'    : '新しい Base 表示名',
+            'priority'        : '7',
+            'throughput'      : '128',
+            'workload_size'   : '16',
+            # 実行条件を送っても、MODIFYでは受け付けない。
+            'dev_options'     : 'Threads=99 Hash=1',
+            'book_name'       : 'different.epd',
+            'upload_pgns'     : 'FALSE',
+            'dev_time_control': '1+0.01',
+        })
+
+        test = self.refresh()
+        self.assertEqual(test.dev_display, '新しい Dev 表示名')
+        self.assertEqual(test.base_display, '新しい Base 表示名')
+        self.assertEqual(test.priority, 7)
+        self.assertEqual(test.throughput, 128)
+        self.assertEqual(test.workload_size, 16)
+        self.assertEqual(test.dev_options, 'Threads=1 Hash=64')
+        self.assertEqual(test.book_name, 'original.epd')
+        self.assertEqual(test.upload_pgns, 'COMPACT')
+        self.assertEqual(test.dev_time_control, '8.0+0.08')
+
+    def test_other_user_cannot_edit_display_names(self):
+        other = User.objects.create_user('mallory', 'm@example.com', 'pw-m')
+        Profile.objects.create(user=other, enabled=True, approver=False)
+        client = Client()
+        client.login(username='mallory', password='pw-m')
+
+        client.post('/test/%d/MODIFY/' % self.test.id, {
+            'dev_display'  : '変更してはいけない',
+            'base_display' : '変更してはいけない',
+        })
+
+        self.assertEqual(self.refresh().dev_display, '')
+        self.assertEqual(self.test.base_display, '')
+
+    def test_workload_page_shows_display_name_edit_fields(self):
+        response = self.client.get('/test/%d/' % self.test.id)
+        self.assertContains(response, 'name="dev_display"')
+        self.assertContains(response, 'name="base_display"')
+        self.assertContains(response, '表示設定')
+
+
+class PGNArchiveTests(TestCase):
+
+    def setUp(self):
+        from OpenBench.config import OPENBENCH_CONFIG, OPENBENCH_CONFIG_CHECKSUM
+        from OpenBench.models import Engine, Machine, Result
+
+        self.user = User.objects.create_user('alice', 'a@example.com', 'pw-alice')
+        Profile.objects.create(user=self.user, enabled=True)
+        engine = Engine.objects.create(name='archive', source='s', sha='a' * 40, bench=1)
+        self.test = Test.objects.create(
+            author='alice', dev=engine, base=engine,
+            dev_engine='YaneuraOu-nagisa', base_engine='YaneuraOu-nagisa',
+            finished=True, upload_pgns='COMPACT')
+        self.machine = Machine.objects.create(
+            user=self.user, secret='worker-secret', workload=0, info={
+                'client_ver' : OPENBENCH_CONFIG['client_version'],
+                'OPENBENCH_CONFIG_CHECKSUM' : OPENBENCH_CONFIG_CHECKSUM,
+            })
+        self.result = Result.objects.create(test=self.test, machine=self.machine)
+
+    def upload(self, part, content):
+        return self.client.post('/clientSubmitPGN/', {
+            'machine_id' : self.machine.id,
+            'secret'     : self.machine.secret,
+            'test_id'    : self.test.id,
+            'result_id'  : self.result.id,
+            'book_index' : 10,
+            'part'       : part,
+            'file'       : SimpleUploadedFile(
+                'games.pgn.bz2', bz2.compress(content)),
+        })
+
+    def test_parts_are_archived_once_and_downloadable(self):
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import FileSystemStorage
+        from OpenBench.models import PGN
+        from OpenBench.pgn_archive import archive_path, archive_status
+        from OpenBench.pgn_watcher import PGNWatcher
+
+        with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
+            self.assertEqual(self.upload(0, b'first pgn').json(), {})
+            first = PGN.objects.get(part=0)
+            watcher = PGNWatcher(threading.Event())
+            watcher.process_pgn(first)
+
+            # tar追記後・DB更新前の停止を模しても、同じメンバーを増やさない。
+            first.processed = False
+            first.save()
+            FileSystemStorage().save(
+                first.filename(), ContentFile(bz2.compress(b'first pgn')))
+            watcher.process_pgn(first)
+
+            # 応答消失を模した同じpartの再送も、新しい行を作らない。
+            self.assertEqual(self.upload(0, b'duplicate pgn').json(), {})
+            self.assertEqual(PGN.objects.count(), 1)
+
+            self.assertEqual(self.upload(1, b'second pgn').json(), {})
+            second = PGN.objects.get(part=1)
+            watcher.process_pgn(second)
+            self.assertEqual(archive_status(self.test), 'ready')
+
+            with tarfile.open(archive_path(self.test.id), 'r') as archive:
+                members = archive.getmembers()
+                self.assertEqual([member.name for member in members], [
+                    first.filename(), second.filename(),
+                ])
+                contents = [
+                    bz2.decompress(archive.extractfile(member).read())
+                    for member in members
+                ]
+                self.assertEqual(contents, [b'first pgn', b'second pgn'])
+
+            self.client.login(username='alice', password='pw-alice')
+            response = self.client.get('/api/pgns/%d/' % self.test.id)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response['Content-Disposition'],
+                'attachment; filename=%d.pgn.tar' % self.test.id)
+            self.assertGreater(len(b''.join(response.streaming_content)), 0)
+
+    def test_missing_archive_is_reported_in_api_and_page(self):
+        with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
+            self.client.login(username='alice', password='pw-alice')
+            response = self.client.get('/api/pgns/%d/' % self.test.id)
+            self.assertEqual(response.json()['archive_status'], 'missing')
+            self.assertIn('No PGNs were received', response.json()['error'])
+
+            response = self.client.get('/test/%d/' % self.test.id)
+            self.assertContains(response, '棋譜アーカイブなし')
+            self.assertNotContains(
+                response, 'href="/api/pgns/%d/"' % self.test.id)
 
 class BuildCommandNormalizationTests(TestCase):
 

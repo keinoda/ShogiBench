@@ -27,6 +27,7 @@
 
 import datetime
 import OpenBench.views
+import OpenBench.pgn_archive
 
 from django.utils import timezone
 from OpenBench.models import *
@@ -36,8 +37,9 @@ def view_workload(request, workload, workload_type):
     assert workload_type in [ 'TEST', 'TUNE', 'DATAGEN' ]
 
     data = {
-        'workload' : workload,
-        'results'  : [],
+        'workload'   : workload,
+        'results'    : [],
+        'pgn_status' : OpenBench.pgn_archive.archive_status(workload),
     }
 
     for result in Result.objects.filter(test=workload):

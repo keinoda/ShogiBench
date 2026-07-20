@@ -43,7 +43,7 @@ import zipfile
 
 from subprocess import PIPE, Popen, call, STDOUT
 from itertools import combinations_with_replacement
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
 ## Local imports must only use "import x", never "from x import ..."
 ## Local imports must also be done in reload_local_imports()
@@ -62,7 +62,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 61 # Client version to send to the Server
+CLIENT_VERSION   = 62 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -576,12 +576,13 @@ class ServerReporter:
         return ServerReporter.report(config, 'clientHeartbeat', payload)
 
     @staticmethod
-    def report_pgn(config, compressed_pgn_text):
+    def report_pgn(config, compressed_pgn_text, part=0):
 
         payload = {
             'test_id'      : config.workload['test']['id'],
             'result_id'    : config.workload['result']['id'],
             'book_index'   : config.workload['test']['book_index'],
+            'part'         : part,
             'Content-Type' : 'application/octet-stream',
         }
 
@@ -935,17 +936,63 @@ class PGNHelper:
     def pretty_format(headers, moves):
         return '\n'.join(headers + [''] + moves)
 
+
+class PGNArchiveReporter:
+
+    def __init__(self, config, file_names, scale_factor):
+        self.config       = config
+        self.file_names   = file_names
+        self.scale_factor = scale_factor
+        self.compact      = config.workload['test']['upload_pgns'] == 'COMPACT'
+        self.enabled      = config.workload['test']['upload_pgns'] != 'FALSE'
+        self.offsets      = {}
+        self.part         = 0
+
+    def checkpoint(self, final=False):
+
+        if not self.enabled:
+            return False
+
+        compressed, next_offsets = pgn_util.compress_new_pgns(
+            self.file_names, self.offsets, self.scale_factor, self.compact, final=final)
+
+        if compressed is None:
+            return False
+
+        # 送信が成功した後だけ位置と連番を進める。応答消失時は同じpartを再送し、
+        # サーバー側の一意制約で二重アーカイブを防ぐ。
+        response = ServerReporter.report_pgn(self.config, compressed, self.part)
+        response.raise_for_status()
+        self.offsets = next_offsets
+        self.part += 1
+        return True
+
 class ResultsReporter(object):
 
     ## Handles idle looping while reading from the results Queue that the match runner
     ## workers place results into. Once finished, this class can be used to collect
     ## all of the errors in the PGN, and send htem back to the server.
 
-    def __init__(self, config, tasks, results_queue, abort_flag):
+    def __init__(self, config, tasks, results_queue, abort_flag, pgn_reporter=None):
         self.config        = config
         self.tasks         = tasks
         self.results_queue = results_queue
         self.abort_flag    = abort_flag
+        self.pgn_reporter  = pgn_reporter
+
+    def checkpoint_pgn(self):
+
+        if self.pgn_reporter is None:
+            return
+
+        try:
+            self.pgn_reporter.checkpoint()
+        except (BadVersionException, utils.OpenBenchFatalWorkerException):
+            raise
+        except Exception:
+            # 結果報告は成功済みなので、棋譜だけ次の周期に同じ位置から再送する。
+            traceback.print_exc()
+            print ('[Note] Failed to checkpoint PGNs; retrying on the next report...')
 
     def process_until_finished(self):
 
@@ -1004,6 +1051,8 @@ class ResultsReporter(object):
                 response = ServerReporter.report_results(self.config, self.pending).json()
                 self.last_report = time.time()
                 self.pending = []
+
+            self.checkpoint_pgn()
 
             # If the test ended, kill all tasks
             if 'stop' in response:
@@ -1499,12 +1548,18 @@ def complete_workload(config):
             cmd = build_runner_command(config, dev_name, base_name, scale_factor, timestamp, x)
             tasks.append(executor.submit(run_and_parse_runner, config, cmd, x, results, abort_flag))
 
+        pgn_files = [MatchRunner.pgn_name(config, timestamp, x) for x in range(runner_cnt)]
+        pgn_reporter = PGNArchiveReporter(config, pgn_files, scale_factor)
+
         # Process the Queue until we exit, finish, or are told to stop by the server
         try:
-            rr = ResultsReporter(config, tasks, results, abort_flag)
+            rr = ResultsReporter(config, tasks, results, abort_flag, pgn_reporter)
             rr.process_until_finished()
-            rr.send_errors(timestamp, runner_cnt)
             MatchRunner.kill_everything(dev_name, base_name)
+            # 対局プロセスが棋譜ファイルを閉じてから、EOFを最終局として扱う。
+            wait(tasks)
+            rr.send_errors(timestamp, runner_cnt)
+            pgn_reporter.checkpoint(final=True)
 
         # Kill everything during an Exception, but print it.
         # SystemExit (キー失効による自己終了) でも対局を残さない
@@ -1512,12 +1567,6 @@ def complete_workload(config):
             abort_flag.set()
             MatchRunner.kill_everything(dev_name, base_name)
             raise
-
-        # Upload the PGN if requested
-        if config.workload['test']['upload_pgns'] != 'FALSE':
-            compact    = config.workload['test']['upload_pgns'] == 'COMPACT'
-            pgn_files  = [MatchRunner.pgn_name(config, timestamp, x) for x in range(runner_cnt)]
-            ServerReporter.report_pgn(config, pgn_util.compress_list_of_pgns(pgn_files, scale_factor, compact))
 
 def safe_download_network_weights(config, branch):
 

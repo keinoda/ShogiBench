@@ -30,6 +30,7 @@ import django.contrib.auth
 import OpenBench.config
 import OpenBench.utils
 import OpenBench.model_utils
+import OpenBench.pgn_archive
 
 from OpenBench.workloads.create_workload import create_new_test, create_workload, finalize_workload_creation
 from OpenBench.workloads.get_workload import get_workload
@@ -1582,12 +1583,22 @@ def client_submit_pgn(request, machine):
 
     with transaction.atomic():
 
-        # Format: test.result.book-index.pgn.bz2
-        pgn            = PGN()
-        pgn.test_id    = int(request.POST['test_id']   )
-        pgn.result_id  = int(request.POST['result_id'] )
-        pgn.book_index = int(request.POST['book_index'])
-        pgn.save()
+        # part は同じ割当を定期回収する連番。再送時は既存行を返して
+        # 同じ棋譜をtarへ二重追加しない。未指定の旧クライアントは part=0。
+        values = {
+            'test_id'    : int(request.POST['test_id']),
+            'result_id'  : int(request.POST['result_id']),
+            'book_index' : int(request.POST['book_index']),
+            'part'       : int(request.POST.get('part', 0)),
+        }
+        if values['part'] < 0:
+            return JsonResponse({ 'error' : 'PGN part must be zero or greater' })
+
+        pgn, created = PGN.objects.get_or_create(**values)
+
+        # 応答消失後の再送では、最初の受信済みファイルをそのまま採用する。
+        if not created:
+            return JsonResponse({})
 
         # Save the .pgn.bz2 to /Media/
         FileSystemStorage().save(pgn.filename(), ContentFile(request.FILES['file'].read()))
@@ -2093,22 +2104,18 @@ def api_pgns(request, pgn_id):
     try: workload = Test.objects.get(pk=pgn_id)
     except: return api_response({ 'error' : 'Requested Workload Id does not exist' })
 
-    # 2. Make sure there actually is a PGN attached to the Workload
-    pgn_path = FileSystemStorage(os.path.join(MEDIA_ROOT, 'PGNs')).path('%d.pgn.tar' % (pgn_id))
-    if not os.path.exists(pgn_path):
-        return api_response({ 'error' : 'Unable to find PGN for Workload #%d' % (pgn_id) })
+    status = OpenBench.pgn_archive.archive_status(workload)
+    errors = {
+        'disabled'   : 'PGN storage was disabled for Workload #%d' % pgn_id,
+        'active'     : 'PGNs cannot be downloaded while the Workload is active',
+        'waiting'    : 'Some machines are still on this Workload. Try again shortly',
+        'processing' : 'Still processing individual PGNs into the archive. Try again shortly',
+        'missing'    : 'No PGNs were received for Workload #%d' % pgn_id,
+    }
+    if status != 'ready':
+        return api_response({ 'error' : errors[status], 'archive_status' : status })
 
-    # 3. Make sure the workload is not currently running
-    if not workload.finished:
-        return api_response({ 'error' : 'PGNs cannot be downloaded while the Workload is active' })
-
-    # 4. Make sure no active workers are still on this workload
-    if OpenBench.utils.getRecentMachines().filter(workload=pgn_id):
-        return api_response({ 'error' : 'Some machines are still on this Workload. Try again shortly' })
-
-    # 5. Make sure there are no pending .pgn.bz2 files to be processed
-    if PGN.objects.filter(test_id=pgn_id).filter(processed=False):
-        return api_response({ 'error' : 'Still processing individual PGNs into the archive. Try again shortly' })
+    pgn_path = OpenBench.pgn_archive.archive_path(pgn_id)
 
     # Craft the download HTML response
     fwrapper = FileWrapper(open(pgn_path, 'rb'), 8192)

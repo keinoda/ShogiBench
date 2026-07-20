@@ -19,6 +19,7 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 import bz2
+import os
 import re
 import sys
 
@@ -38,6 +39,55 @@ def pgn_iterator(fname):
             if not headers or not move_list:
                 break
             yield (headers, move_list)
+
+
+def pgn_iterator_from_offset(fname, offset=0, final=False):
+    """追記中のPGNから、完全に書き終わった対局だけを位置付きで返す。"""
+
+    with open(fname) as pgn:
+        pgn.seek(offset)
+
+        while True:
+            header_lines = []
+            while True:
+                line = pgn.readline()
+                if line == '':
+                    return
+                line = line.rstrip()
+                if not line:
+                    break
+                header_lines.append(line)
+
+            # 対局間の余分な空行は読み飛ばす。
+            if not header_lines:
+                continue
+
+            move_lines = []
+            reached_eof = False
+            while True:
+                line = pgn.readline()
+                if line == '':
+                    reached_eof = True
+                    break
+                line = line.rstrip()
+                if not line:
+                    break
+                move_lines.append(line)
+
+            if not move_lines:
+                return
+
+            move_list = ' '.join(move_lines)
+            complete = re.search(r'(?:1-0|0-1|1/2-1/2|\*)\s*$', move_list)
+
+            # 実行中のEOFは、match runnerがまだ続きを書く可能性がある。
+            if not complete or (reached_eof and not final):
+                return
+
+            yield (pgn_header_list(header_lines), move_list, pgn.tell())
+
+            if reached_eof:
+                return
 
 def pgn_header_list(lines):
     # PGN Format: [<Header> "<Value>"]
@@ -94,6 +144,38 @@ def strip_entire_pgn(file_name, scale_factor, compact):
         stripped += pgn_strip_movelist(move_text, compact) + '\n\n'
 
     return stripped
+
+
+def strip_new_pgns(file_name, offset, scale_factor, compact, final=False):
+
+    if not os.path.isfile(file_name):
+        return '', offset
+
+    stripped   = ''
+    next_offset = offset
+    for header_dict, move_text, complete_offset in pgn_iterator_from_offset(
+            file_name, offset=offset, final=final):
+        header_dict['ScaleFactor'] = str(scale_factor)
+        stripped += pgn_strip_headers(header_dict, compact) + '\n\n'
+        stripped += pgn_strip_movelist(move_text, compact) + '\n\n'
+        next_offset = complete_offset
+
+    return stripped, next_offset
+
+
+def compress_new_pgns(file_names, offsets, scale_factor, compact, final=False):
+    """前回位置以降の完全な対局だけを圧縮し、成功後に使う次位置を返す。"""
+
+    text         = ''
+    next_offsets = dict(offsets)
+
+    for fname in file_names:
+        chunk, next_offset = strip_new_pgns(
+            fname, offsets.get(fname, 0), scale_factor, compact, final=final)
+        text += chunk
+        next_offsets[fname] = next_offset
+
+    return (bz2.compress(text.encode()) if text else None), next_offsets
 
 def compress_list_of_pgns(file_names, scale_factor, compact):
 

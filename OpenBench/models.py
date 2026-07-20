@@ -353,10 +353,21 @@ class PGN(Model):
     test_id    = IntegerField(default=0)
     result_id  = IntegerField(default=0)
     book_index = IntegerField(default=0)
+    part        = IntegerField(default=0)
     processed  = BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(
+                fields=['test_id', 'result_id', 'book_index', 'part'],
+                name='unique_pgn_archive_part'),
+        ]
 
     def __str__(self):
         return self.filename()
 
     def filename(self):
-        return '%s.%s.%s.pgn.bz2' % (self.test_id, self.result_id, self.book_index)
+        # part=0 は旧クライアントと同じ名前を保ち、差分送信だけ連番を足す。
+        suffix = '' if self.part == 0 else '.%s' % self.part
+        return '%s.%s.%s%s.pgn.bz2' % (
+            self.test_id, self.result_id, self.book_index, suffix)

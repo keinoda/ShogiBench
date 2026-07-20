@@ -95,6 +95,15 @@ def restore_workload(request, profile, workload):
 
 def tweak_workload(request, profile, workload):
 
+    # 表示名は実行条件に影響しないため、作成後も作者/承認者が直せる。
+    if 'dev_display' in request.POST:
+        workload.dev_display = request.POST['dev_display'].strip()[:64]
+
+    if workload.test_mode == 'SPSA':
+        workload.base_display = workload.dev_display
+    elif 'base_display' in request.POST:
+        workload.base_display = request.POST['base_display'].strip()[:64]
+
     try: # Priority can be any integer value
         workload.priority = int(request.POST['priority'])
     except: pass

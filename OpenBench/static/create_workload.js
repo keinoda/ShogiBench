@@ -204,6 +204,54 @@ function add_defaults_to_preset(engine, preset, workload_type) {
 }
 
 
+function preset_managed_options(engine, workload_type) {
+
+    const presets = workload_type == 'TEST'    ? config.engines[engine].test_presets
+                  : workload_type == 'TUNE'    ? config.engines[engine].tune_presets
+                  : workload_type == 'DATAGEN' ? config.engines[engine].datagen_presets : {};
+
+    const managed = new Set();
+    for (const name in presets) {
+        if (name == 'default')
+            continue;
+        for (const option in presets[name])
+            managed.add(option);
+    }
+
+    // 検定方式の3項目は連動する。固定局数からSPRTへ戻すときに、
+    // boundsだけでなくconfidenceも既定値へ戻す必要がある。
+    const test_mode_options = ['test_bounds', 'test_confidence', 'test_max_games'];
+    if (test_mode_options.some(option => managed.has(option)))
+        for (const option of test_mode_options)
+            managed.add(option);
+
+    return managed;
+}
+
+
+function settings_for_preset(engine, preset, workload_type) {
+
+    const selected = get_presets(engine, preset, workload_type) || {};
+
+    // 明示的なdefault適用（初期表示・エンジン変更）は全項目を対象にする。
+    if (preset == 'default')
+        return selected;
+
+    // ボタン押下時は、いずれかの名前付きプリセットが管理する項目だけを
+    // defaultへ戻してから選択値を重ねる。ブランチや局面集は保持する。
+    const defaults = get_presets(engine, 'default', workload_type) || {};
+    const settings = {};
+    for (const option of preset_managed_options(engine, workload_type))
+        if (defaults.hasOwnProperty(option))
+            settings[option] = defaults[option];
+
+    for (const option in selected)
+        settings[option] = selected[option];
+
+    return settings;
+}
+
+
 function option_tokens(options) {
     return options.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
 }
@@ -333,19 +381,12 @@ function retain_specific_options(engine, preset, workload_type) {
 
     set_option('base_options', base_options);
 
-    // Retain the base engine's original base_branch, instead of leeting the dev engine override
-
-    if (settings.hasOwnProperty('base_branch'))
-        set_option('base_branch', settings['base_branch']);
 }
 
 
 function apply_preset(preset, workload_type) {
 
-    if (preset != 'default')
-        apply_preset('default', workload_type);
-
-    const settings = get_presets(get_dev_engine(), preset, workload_type);
+    const settings = settings_for_preset(get_dev_engine(), preset, workload_type);
 
     for (const option in settings) {
 
@@ -392,7 +433,10 @@ function change_engine(engine, target, workload_type) {
     set_option('scale_nps', config.engines[engine].nps);
     set_option('scale_method', workload_type == 'TUNE' ? 'DEV' : 'BASE');
 
-    apply_preset('STC', workload_type);
+    // 初期表示とエンジン変更時だけ、ブランチ・局面集を含む全defaultを適用する。
+    apply_preset('default', workload_type);
+    if (get_presets(get_dev_engine(), 'STC', workload_type))
+        apply_preset('STC', workload_type);
 }
 
 function set_test_type() {

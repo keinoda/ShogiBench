@@ -165,7 +165,17 @@
         <!-- PGN Download Button -->
         {% if workload.upload_pgns != "FALSE" %}
             <div class="anchor-container">
-                <a class="mt-1 anchorbutton btn-blue" href="/api/pgns/{{workload.id}}/">棋譜アーカイブをダウンロード</a>
+                {% if pgn_status == "ready" %}
+                    <a class="mt-1 anchorbutton btn-blue" href="/api/pgns/{{workload.id}}/">棋譜アーカイブをダウンロード</a>
+                {% elif pgn_status == "active" %}
+                    <a class="mt-1 anchorbutton btn-disabled" title="テスト終了後に取得できます">棋譜アーカイブ（実行中）</a>
+                {% elif pgn_status == "waiting" %}
+                    <a class="mt-1 anchorbutton btn-disabled" title="担当ワーカーの終了を待っています">棋譜アーカイブ（ワーカー終了待ち）</a>
+                {% elif pgn_status == "processing" %}
+                    <a class="mt-1 anchorbutton btn-disabled" title="受信済み棋譜を集約しています">棋譜アーカイブ（準備中）</a>
+                {% else %}
+                    <a class="mt-1 anchorbutton btn-disabled" title="ワーカーから棋譜が送信されていません">棋譜アーカイブなし</a>
+                {% endif %}
             </div>
         {% endif %}
 
@@ -212,6 +222,22 @@
             {% csrf_token %}
             <div class="form">
                 <div class="col-full">
+
+                    <h4>表示設定</h4>
+
+                    <div class="row">
+                        <label for="dev_display">{% if type == "TUNE" %}表示名{% else %}Dev 表示名{% endif %}</label>
+                        <input value="{{workload.dev_display}}" id="dev_display" name="dev_display" maxlength="64">
+                    </div>
+
+                    {% if type == "TEST" or type == "DATAGEN" %}
+                        <div class="row">
+                            <label for="base_display">Base 表示名</label>
+                            <input value="{{workload.base_display}}" id="base_display" name="base_display" maxlength="64">
+                        </div>
+                    {% endif %}
+
+                    <h4>実行設定</h4>
 
                     <div class="row">
                         <label for="priority">優先度</label>
