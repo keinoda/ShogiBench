@@ -475,6 +475,12 @@ def choose_launch_mode(base_dir, run_dir, canonical, spsa):
 
     offsets = { 'pairs' : 0, 'batches' : 0, 'games' : 0, 'wins' : 0, 'losses' : 0, 'draws' : 0 }
     save_offsets(base_dir, offsets)
+
+    # 初期化中の異常終了では state.params だけが残ることがある。
+    # canonical からの再初期化を明示し、rshogi の既存 state 保護に抵触させない。
+    if os.path.isfile(state_path):
+        return ['--init-from', canonical, '--force-init'], spsa['total_pairs'], offsets
+
     return ['--init-from', canonical], spsa['total_pairs'], offsets
 
 

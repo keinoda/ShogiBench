@@ -264,6 +264,24 @@ class LaunchModeTests(unittest.TestCase):
             self.assertEqual(flags, ['--resume', '--force-unlock'])
             self.assertEqual(total, 12345)
 
+    def test_partial_fresh_start_uses_force_init(self):
+
+        # 初期化中に落ちて state.params だけ残った場合はcanonicalから再初期化する
+        with tempfile.TemporaryDirectory() as temp:
+            base_dir, run_dir = temp, os.path.join(temp, 'run')
+            os.makedirs(run_dir)
+            canonical = os.path.join(temp, 'canonical.params')
+
+            with open(os.path.join(run_dir, 'state.params'), 'w') as fout:
+                fout.write('Foo,int,100.000000,50,200,10,0.002\n')
+
+            flags, total, offsets = self.mod.choose_launch_mode(
+                base_dir, run_dir, canonical, example_spsa())
+
+            self.assertEqual(flags, ['--init-from', canonical, '--force-init'])
+            self.assertEqual(total, 51200)
+            self.assertEqual(offsets['pairs'], 0)
+
     def test_takeover_from_server_state(self):
 
         # 別マシンからの引き継ぎ: サーバの state.params を起点に残りペアを回す

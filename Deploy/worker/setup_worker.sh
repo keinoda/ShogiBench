@@ -397,6 +397,32 @@ toolchain_ready() {
     return 0
 }
 
+ensure_open_file_limit() {
+
+    # rshogi SPSA は1対局につき2エンジンを起動し、各エンジンに
+    # stdin/stdout/stderr のパイプを持つ。多コア環境でも既定の1024 FDへ
+    # 到達しないよう、許容される範囲でワーカーのsoft上限を引き上げる。
+    local target=65536 current hard
+    current=$(ulimit -Sn 2>/dev/null || echo 0)
+    hard=$(ulimit -Hn 2>/dev/null || echo 0)
+
+    case "$hard" in
+        unlimited) ;;
+        ''|*[!0-9]*) target="$current" ;;
+        *) [ "$hard" -lt "$target" ] && target="$hard" ;;
+    esac
+
+    if [ "$current" -lt "$target" ]; then
+        if ulimit -Sn "$target" 2>/dev/null; then
+            echo "[setup_worker] open-file soft limit raised: $current -> $target"
+        else
+            echo "[setup_worker] warning: unable to raise open-file soft limit above $current"
+        fi
+    else
+        echo "[setup_worker] open-file soft limit ready: $current"
+    fi
+}
+
 # For tests: expose the functions above without running the bootstrap
 if [ "${SHOGIBENCH_SOURCE_ONLY:-0}" = "1" ]; then
     return 0 2>/dev/null || exit 0
@@ -460,6 +486,8 @@ release_boot_lock
 # leave nothing registered; from here we handle errors ourselves and
 # retry, so a transient network hiccup self-heals instead of wedging.
 set +e
+
+ensure_open_file_limit
 
 # Install, retrying with backoff. A first attempt often fails on a slow
 # mirror; without this the worker would spin forever on a broken toolchain.
