@@ -545,6 +545,29 @@ class GithubBranchListTests(TestCase):
 
     @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
     @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_dedicated_private_engine_lists_its_repository(self, mock_get):
+        mock_get.side_effect = [
+            self.FakeResponse(200, {
+                'default_branch' : 'master',
+                'private'        : True,
+            }),
+            self.FakeResponse(200, [
+                { 'name' : 'master' },
+                { 'name' : 'nagisa_v3' },
+            ]),
+        ]
+
+        response = self.client.get('/api/branches/', {
+            'engine' : 'YaneuraOu-private',
+            'repo'   : 'https://github.com/keinoda/YaneuraOu-private',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['default_branch'], 'master')
+        self.assertEqual(response.json()['branches'], ['master', 'nagisa_v3'])
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
     def test_endpoint_rejects_other_private_repositories(self, mock_get):
         mock_get.return_value = self.FakeResponse(200, {
             'default_branch' : 'main',
@@ -584,6 +607,24 @@ class GithubBranchListTests(TestCase):
         self.assertContains(response, 'GitHubから取得中...')
         self.assertNotContains(response, '<input id="dev_branch"')
         self.assertNotContains(response, '<input id="base_branch"')
+
+    def test_workload_form_lists_dedicated_private_engine(self):
+        response = self.client.get('/test/new/')
+
+        self.assertContains(
+            response,
+            '<option value="YaneuraOu-private">YaneuraOu-private</option>',
+            count=2,
+            html=True,
+        )
+        engine = response.context['config']['engines']['YaneuraOu-private']
+        self.assertEqual(
+            engine['source'],
+            'https://github.com/keinoda/YaneuraOu-private',
+        )
+        self.assertEqual(engine['private_sources'], [
+            'https://github.com/keinoda/YaneuraOu-private',
+        ])
 
 
 class PrivateGithubArchiveTests(TestCase):

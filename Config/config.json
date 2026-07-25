@@ -33,6 +33,7 @@
 
     "engines" : [
         "YaneuraOu-nagisa",
+        "YaneuraOu-private",
         "YaneuraOu-souyuukou",
         "YaneuraOu"
     ]
