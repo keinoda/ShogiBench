@@ -465,8 +465,8 @@ def network_download_link(workload, branch):
     engine = workload.dev_engine  if branch == 'dev' else workload.base_engine
 
     # Network could have been deleted after this workload was finished
-    if (network := OpenBench.models.Network.objects.filter(sha256=sha, engine=engine).first()):
-        return '/networks/%s/download/%s/' % (engine, sha)
+    if (network := OpenBench.utils.network_for_engine(engine, sha256=sha)):
+        return '/networks/%s/download/%s/' % (network.engine, sha)
 
     return '/networks/%s/' % (engine)
 

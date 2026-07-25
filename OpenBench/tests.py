@@ -41,10 +41,13 @@ from django.test import override_settings
 
 from OpenBench.models import BuildVariant, Engine, LogEvent, Machine, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
-from OpenBench.utils import merge_required_options
+from OpenBench.utils import (
+    build_network_engines, merge_required_options, network_for_engine)
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
-from OpenBench.workloads.get_workload import game_distribution, valid_hardware_assignment, valid_private_source_assignment, workload_to_dictionary
-from OpenBench.workloads.verify_workload import collect_github_info
+from OpenBench.workloads.get_workload import (
+    game_distribution, network_aux_files, valid_hardware_assignment,
+    valid_private_source_assignment, workload_to_dictionary)
+from OpenBench.workloads.verify_workload import collect_github_info, verify_network
 
 TEST_SSH_KEY = None
 
@@ -625,6 +628,11 @@ class GithubBranchListTests(TestCase):
         self.assertEqual(engine['private_sources'], [
             'https://github.com/keinoda/YaneuraOu-private',
         ])
+        self.assertEqual(
+            engine['build_network_group'],
+            response.context['config']['engines']
+                ['YaneuraOu-nagisa']['build_network_group'],
+        )
 
 
 class PrivateGithubArchiveTests(TestCase):
@@ -1032,6 +1040,65 @@ class NetworkUploadTests(TestCase):
             body = b''.join(response.streaming_content)
             self.assertEqual(body, content)
 
+    def test_compatible_private_engine_uses_nagisa_network_and_aux_file(self):
+        content = b'\x12\x34' * 10_000
+        aux = b'\x56\x78' * 5_000
+
+        with override_settings(MEDIA_ROOT=self.media), \
+             patch('OpenBench.utils.MEDIA_ROOT', self.media):
+            self.client.post('/networks/YaneuraOu-nagisa/UPLOAD/shared.bin/', {
+                'netfile'  : SimpleUploadedFile('nn.bin', content),
+                'auxfiles' : [SimpleUploadedFile('progress.bin', aux)],
+            })
+            network = Network.objects.get(
+                engine='YaneuraOu-nagisa', name='shared.bin')
+
+            response = self.client.post(
+                '/api/networks/YaneuraOu-private/%s/' % network.sha256)
+            self.assertEqual(b''.join(response.streaming_content), content)
+
+            response = self.client.post(
+                '/api/networks/YaneuraOu-private/%s/aux/progress.bin/'
+                % network.sha256)
+            self.assertEqual(b''.join(response.streaming_content), aux)
+
+            response = self.client.post('/api/networks/YaneuraOu-private/')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                [item['name'] for item in response.json()['networks']],
+                ['shared.bin'],
+            )
+
+            self.assertEqual(
+                network_aux_files('YaneuraOu-private', network.sha256),
+                [{ 'name' : 'progress.bin',
+                   'sha' : hashlib.sha256(aux).hexdigest()[:8].upper() }],
+            )
+
+    def test_compatible_network_validation_works_in_both_directions(self):
+        nagisa = Network.objects.create(
+            engine='YaneuraOu-nagisa', name='nagisa.bin',
+            sha256='A1B2C3D4', author='alice')
+        private = Network.objects.create(
+            engine='YaneuraOu-private', name='private.bin',
+            sha256='E5F6A7B8', author='alice')
+
+        for engine, network in [
+                ('YaneuraOu-private', nagisa),
+                ('YaneuraOu-nagisa', private)]:
+            request = SimpleNamespace(POST={
+                'dev_engine'  : engine,
+                'dev_network' : network.sha256,
+            })
+            errors = []
+            verify_network(
+                errors, request, 'dev_network', 'Dev Network', 'dev_engine')
+            self.assertEqual(errors, [])
+            self.assertEqual(
+                network_for_engine(engine, sha256=network.sha256),
+                network,
+            )
+
     def test_worker_key_cannot_delete_network(self):
         key = WorkerKey.objects.create(user=self.user, name='dl2', token='e' * 48)
 
@@ -1092,6 +1159,58 @@ class SharedBuildVariantTests(TestCase):
         BuildVariant.objects.create(engine='YaneuraOu-nagisa', name='dup', args='specific', author='alice')
         self.assertEqual(engine_build_variants('YaneuraOu-nagisa')['dup'], 'specific')
         self.assertEqual(engine_build_variants('YaneuraOu')['dup'], 'shared')
+
+    def test_nagisa_and_private_share_engine_specific_variants(self):
+        BuildVariant.objects.create(
+            engine='YaneuraOu-nagisa', name='nagisa-build',
+            args='tournament NAGISA=1', author='alice')
+        BuildVariant.objects.create(
+            engine='YaneuraOu-private', name='private-build',
+            args='tournament PRIVATE=1', author='alice')
+
+        self.assertEqual(
+            build_network_engines('YaneuraOu-nagisa'),
+            ['YaneuraOu-nagisa', 'YaneuraOu-private'],
+        )
+        self.assertEqual(
+            build_network_engines('YaneuraOu-private'),
+            ['YaneuraOu-private', 'YaneuraOu-nagisa'],
+        )
+        self.assertEqual(
+            engine_build_variants('YaneuraOu-private')['nagisa-build'],
+            'tournament NAGISA=1',
+        )
+        self.assertEqual(
+            engine_build_variants('YaneuraOu-nagisa')['private-build'],
+            'tournament PRIVATE=1',
+        )
+
+        response = self.client.get('/test/new/')
+        self.assertIn(
+            'nagisa-build',
+            response.context['build_variants']['YaneuraOu-private'],
+        )
+        self.assertIn(
+            'private-build',
+            response.context['build_variants']['YaneuraOu-nagisa'],
+        )
+
+    def test_selected_engine_variant_wins_on_compatible_name_collision(self):
+        BuildVariant.objects.create(
+            engine='YaneuraOu-nagisa', name='same',
+            args='NAGISA=1', author='alice')
+        BuildVariant.objects.create(
+            engine='YaneuraOu-private', name='same',
+            args='PRIVATE=1', author='alice')
+
+        self.assertEqual(
+            engine_build_variants('YaneuraOu-nagisa')['same'],
+            'NAGISA=1',
+        )
+        self.assertEqual(
+            engine_build_variants('YaneuraOu-private')['same'],
+            'PRIVATE=1',
+        )
 
 class DisplayNameTests(TestCase):
 

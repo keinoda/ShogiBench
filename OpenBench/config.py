@@ -26,7 +26,7 @@ import traceback
 
 from OpenSite.settings import PROJECT_PATH
 
-OPENBENCH_STATIC_VERSION = 'v11'
+OPENBENCH_STATIC_VERSION = 'v12'
 
 OPENBENCH_CONFIG          = None # Initialized by OpenBench/apps.py
 OPENBENCH_CONFIG_CHECKSUM = None # Initialized by OpenBench/apps.py
@@ -72,6 +72,7 @@ def load_engine_config(engine_name):
 
         conf.setdefault('test_required_options', '')
         conf.setdefault('private_sources', [])
+        conf.setdefault('build_network_group', engine_name)
         verify_engine_basics(conf)
         verify_engine_build(engine_name, conf)
 
@@ -134,6 +135,8 @@ def verify_engine_basics(conf):
     assert type(conf.get('private_sources')) == list
     assert all(type(source) == str and source.startswith('https://github.com/')
                for source in conf['private_sources'])
+    assert type(conf.get('build_network_group')) == str
+    assert conf['build_network_group']
     assert type(conf.get('build')) == dict
     assert type(conf.get('test_required_options')) == str
 

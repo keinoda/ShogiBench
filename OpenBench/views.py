@@ -418,13 +418,19 @@ def engine_build_variants(engine):
 
     ## Static variants from the engine's json config, merged with the
     ## user-defined ones from the /builds/ page. Static names win, then
-    ## engine-specific variants, then variants shared across all engines
-    ## (registered under the pseudo-engine '*')
+    ## variants for the selected engine, compatible engines, and finally
+    ## variants shared across all engines (registered under '*')
 
-    variants = dict(OPENBENCH_CONFIG['engines'][engine]['build']['variants'])
+    compatible_engines = OpenBench.utils.build_network_engines(engine)
+    variants = {}
 
-    for variant in BuildVariant.objects.filter(engine=engine).order_by('name'):
-        variants.setdefault(variant.name, variant.args)
+    for candidate in compatible_engines:
+        for name, args in OPENBENCH_CONFIG['engines'][candidate]['build']['variants'].items():
+            variants.setdefault(name, args)
+
+    for candidate in compatible_engines:
+        for variant in BuildVariant.objects.filter(engine=candidate).order_by('name'):
+            variants.setdefault(variant.name, variant.args)
 
     for variant in BuildVariant.objects.filter(engine='*').order_by('name'):
         variants.setdefault(variant.name, variant.args)
@@ -460,7 +466,11 @@ def builds(request):
             if not re.match(r'^[\w.+()-]+$', name):
                 return redirect(request, '/builds/', error='Variant names may only contain letters, numbers, and ._+()-')
 
-            static_scope = OPENBENCH_CONFIG['engines'].keys() if engine == '*' else [engine]
+            static_scope = (
+                OPENBENCH_CONFIG['engines'].keys()
+                if engine == '*'
+                else OpenBench.utils.build_network_engines(engine)
+            )
             for static_engine in static_scope:
                 if name in OPENBENCH_CONFIG['engines'][static_engine]['build']['variants']:
                     return redirect(request, '/builds/', error='"%s" is a predefined variant of %s and cannot be changed' % (name, static_engine))
@@ -2083,12 +2093,13 @@ def api_networks(request, engine):
     if engine in OPENBENCH_CONFIG['engines'].keys():
 
         default = None
-        if (network := Network.objects.filter(engine=engine, default=True).first()):
+        if (network := OpenBench.utils.network_for_engine(engine, default=True)):
             default = OpenBench.model_utils.network_to_dict(network)
 
         networks = [
             OpenBench.model_utils.network_to_dict(network)
-            for network in Network.objects.filter(engine=engine)
+            for network in Network.objects.filter(
+                engine__in=OpenBench.utils.build_network_engines(engine))
         ]
 
         return api_response({ 'default' : default, 'networks' : networks })
@@ -2102,10 +2113,10 @@ def api_network_download(request, engine, identifier):
     if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
 
-    if (network := Network.objects.filter(engine=engine, sha256=identifier).first()):
+    if (network := OpenBench.utils.network_for_engine(engine, sha256=identifier)):
         return OpenBench.utils.network_download(request, engine, network)
 
-    if (network := Network.objects.filter(engine=engine, name=identifier).first()):
+    if (network := OpenBench.utils.network_for_engine(engine, name=identifier)):
         return OpenBench.utils.network_download(request, engine, network)
 
     return api_response({ 'error' : 'Engine not found. Check /api/config/ for a full list' })
@@ -2116,7 +2127,9 @@ def api_network_download_aux(request, engine, identifier, name):
     if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
 
-    if not (network := OpenBench.utils.network_disambiguate(engine, identifier)):
+    network = OpenBench.utils.network_for_engine(engine, name=identifier)
+    network = network or OpenBench.utils.network_for_engine(engine, sha256=identifier)
+    if not network:
         return api_response({ 'error' : 'Network %s for Engine %s not found' % (identifier, engine) })
 
     if not (aux := network.aux_files.filter(name=name).first()):

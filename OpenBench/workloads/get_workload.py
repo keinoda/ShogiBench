@@ -38,7 +38,7 @@ def network_aux_files(engine, sha):
     # eval_options.txt), as [{name, sha}] for the worker to stage
     if not sha or sha == 'None':
         return []
-    network = Network.objects.filter(engine=engine, sha256=sha).first()
+    network = OpenBench.utils.network_for_engine(engine, sha256=sha)
     if not network:
         return []
     return [{ 'name' : aux.name, 'sha' : aux.sha256 } for aux in network.aux_files.all()]

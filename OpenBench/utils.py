@@ -359,6 +359,27 @@ def get_machine(machineid, user, info):
 
 # Purely Helper functions for Networks views
 
+def build_network_engines(engine):
+
+    if engine not in OPENBENCH_CONFIG['engines']:
+        return [engine]
+
+    group = OPENBENCH_CONFIG['engines'][engine]['build_network_group']
+    compatible = [
+        name for name, config in OPENBENCH_CONFIG['engines'].items()
+        if config['build_network_group'] == group and name != engine
+    ]
+    return [engine] + compatible
+
+def network_for_engine(engine, **lookup):
+
+    # 同じbuild/networkグループ内では資産を相互利用する。
+    # 同じ識別子が双方にある場合は、選択中エンジン自身の登録を優先する。
+    for candidate in build_network_engines(engine):
+        if network := Network.objects.filter(engine=candidate, **lookup).first():
+            return network
+    return None
+
 def network_disambiguate(engine, identifier):
 
     candidates = Network.objects.filter(engine=engine)

@@ -5,6 +5,7 @@
     "private_sources" : [
         "https://github.com/keinoda/YaneuraOu-private"
     ],
+    "build_network_group" : "YaneuraOu-nagisa",
     "test_required_options" : "USI_OwnBook=false NetworkDelay=0 NetworkDelay2=0 MinimumThinkingTime=100 RoundUpToFullSecond=false",
 
     "build" : {
