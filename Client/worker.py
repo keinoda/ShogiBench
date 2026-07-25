@@ -62,7 +62,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 62 # Client version to send to the Server
+CLIENT_VERSION   = 63 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -1630,10 +1630,23 @@ def safe_download_engine(config, branch, net_path):
         make_path  = config.workload['test'][branch]['build']['path']
         alt_binary = config.workload['test'][branch]['build'].get('binary', '')
         compiler   = config.compilers[engine][0]
+        source_request = None
+
+        if source.startswith(utils.PRIVATE_SOURCE_PREFIX):
+            source_request = {
+                'server'  : config.server,
+                'payload' : {
+                    'machine_id' : config.machine_id,
+                    'secret'     : config.secret_token,
+                    'test_id'    : config.workload['test']['id'],
+                    'side'       : branch,
+                },
+            }
 
         try:
             return utils.download_public_engine(
-                engine, net_path, branch_name, source, make_path, out_path, compiler, build_args, alt_binary, tune)
+                engine, net_path, branch_name, source, make_path, out_path,
+                compiler, build_args, alt_binary, tune, source_request)
 
         except utils.OpenBenchBuildFailedException as error:
 

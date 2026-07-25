@@ -45,12 +45,7 @@ def twoDigitPrecision(value):
 
 def gitDiffLink(test):
 
-    engines = OpenBench.config.OPENBENCH_CONFIG['engines']
-
-    if test.dev_engine in engines and engines[test.dev_engine]['private']:
-        repo = OpenBench.config.OPENBENCH_CONFIG['engines'][test.dev_engine]['source']
-    else:
-        repo = OpenBench.utils.path_join(*test.dev.source.split('/')[:-2])
+    repo = test.dev_repo.rstrip('/')
 
     if test.test_mode == 'SPSA':
         return OpenBench.utils.path_join(repo, 'compare', test.dev.sha[:8])

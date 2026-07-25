@@ -2,6 +2,9 @@
     "private" : false,
     "nps"     : 1000000,
     "source"  : "https://github.com/keinoda/YaneuraOu",
+    "private_sources" : [
+        "https://github.com/keinoda/YaneuraOu-private"
+    ],
     "test_required_options" : "USI_OwnBook=false NetworkDelay=0 NetworkDelay2=0 MinimumThinkingTime=100 RoundUpToFullSecond=false",
 
     "build" : {

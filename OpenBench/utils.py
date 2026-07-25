@@ -150,6 +150,37 @@ def read_git_credentials(engine):
         with open(fpath) as fin:
             return { 'Authorization' : 'token %s' % fin.readlines()[0].rstrip() }
 
+
+PRIVATE_SOURCE_PREFIX = 'openbench://github/'
+
+
+def is_private_source(engine, repo):
+
+    if engine not in OpenBench.config.OPENBENCH_CONFIG['engines']:
+        return False
+
+    target = (repo or '').rstrip('/')
+    allowed = OpenBench.config.OPENBENCH_CONFIG['engines'][engine].get('private_sources', [])
+    return target in [source.rstrip('/') for source in allowed]
+
+
+def private_source_archive(repo, sha):
+
+    target = (repo or '').rstrip('/')
+    prefix = 'https://github.com/'
+    if not target.startswith(prefix) or not re.fullmatch(r'[0-9a-fA-F]{40}', sha or ''):
+        raise ValueError('Invalid private GitHub source')
+
+    return path_join(PRIVATE_SOURCE_PREFIX.rstrip('/'), target[len(prefix):], '%s.zip' % sha)
+
+
+def workload_uses_private_source(test):
+    return (
+        is_private_source(test.dev_engine, test.dev_repo)
+        or is_private_source(test.base_engine, test.base_repo)
+    )
+
+
 def path_join(*args):
     return "/".join([f.lstrip("/").rstrip("/") for f in args]).rstrip('/')
 

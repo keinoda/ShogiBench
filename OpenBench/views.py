@@ -22,6 +22,7 @@ import base64, binascii, io, os, hashlib, datetime, json, secrets, shlex, sys, r
 from types import SimpleNamespace
 
 import paramiko
+import requests
 
 import django.http
 import django.shortcuts
@@ -47,7 +48,7 @@ from OpenSite.settings import MEDIA_ROOT
 
 from django.db import transaction, IntegrityError
 from django.db.models import Count, F, Q
-from django.http import HttpResponse, JsonResponse, FileResponse
+from django.http import HttpResponse, JsonResponse, FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
 from django.core.files.base import ContentFile
@@ -1471,6 +1472,75 @@ def client_get_network(request, engine, name):
 
     # Return the requested Neural Network file for the Client
     return networks(request, engine, 'DOWNLOAD', name, client=True)
+
+
+@csrf_exempt
+@verify_worker
+def client_get_github_archive(request, machine):
+
+    test = Test.objects.filter(id=request.POST.get('test_id', 0)).first()
+    side = request.POST.get('side')
+
+    if not test or side not in ('dev', 'base'):
+        return HttpResponse('Invalid source request', status=400)
+
+    # 非公開ソースは、そのテストを現在割り当てられている作成者本人の
+    # workerにだけ渡す。他ユーザーのworkerへprivate codeを配布しない。
+    if machine.workload != test.id or machine.user.username != test.author:
+        return HttpResponse('Source access denied', status=403)
+
+    repo        = getattr(test, '%s_repo' % side).rstrip('/')
+    engine_name = getattr(test, '%s_engine' % side)
+    engine      = getattr(test, side)
+
+    if not OpenBench.utils.is_private_source(engine_name, repo):
+        return HttpResponse('Source not found', status=404)
+
+    try:
+        expected_source = OpenBench.utils.private_source_archive(repo, engine.sha)
+    except ValueError:
+        return HttpResponse('Source not found', status=404)
+
+    if engine.source != expected_source:
+        return HttpResponse('Source not found', status=404)
+
+    headers = OpenBench.utils.read_git_credentials(engine_name)
+    if not headers:
+        return HttpResponse('Private source token is not configured', status=503)
+
+    match = re.fullmatch(
+        r'https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)', repo)
+    if not match:
+        return HttpResponse('Source not found', status=404)
+
+    url = OpenBench.utils.path_join(
+        'https://api.github.com/repos', match.group(1), match.group(2),
+        'zipball', engine.sha)
+
+    try:
+        upstream = requests.get(
+            url, headers=headers, stream=True, timeout=(15, 300))
+    except requests.RequestException:
+        return HttpResponse('GitHub source download failed', status=502)
+
+    if upstream.status_code != 200:
+        upstream.close()
+        return HttpResponse('GitHub source download failed', status=502)
+
+    def chunks():
+        try:
+            for chunk in upstream.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    response = StreamingHttpResponse(chunks(), content_type='application/zip')
+    response['Content-Disposition'] = 'attachment; filename="%s-%s.zip"' % (
+        match.group(2), engine.sha[:12])
+    response['Cache-Control'] = 'private, no-store'
+    return response
+
 
 @csrf_exempt
 @verify_worker

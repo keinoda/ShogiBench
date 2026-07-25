@@ -71,6 +71,7 @@ def load_engine_config(engine_name):
             conf = json.load(fin)
 
         conf.setdefault('test_required_options', '')
+        conf.setdefault('private_sources', [])
         verify_engine_basics(conf)
         verify_engine_build(engine_name, conf)
 
@@ -130,6 +131,9 @@ def verify_engine_basics(conf):
     assert type(conf.get('private')) == bool
     assert type(conf.get('nps')) == int and conf['nps'] > 0
     assert type(conf.get('source')) == str
+    assert type(conf.get('private_sources')) == list
+    assert all(type(source) == str and source.startswith('https://github.com/')
+               for source in conf['private_sources'])
     assert type(conf.get('build')) == dict
     assert type(conf.get('test_required_options')) == str
 

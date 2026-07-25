@@ -39,11 +39,11 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import override_settings
 
-from OpenBench.models import BuildVariant, Engine, LogEvent, Network, NetworkAuxFile, Profile, Test, WorkerKey
+from OpenBench.models import BuildVariant, Engine, LogEvent, Machine, Network, NetworkAuxFile, Profile, Test, WorkerKey
 from OpenBench.templatetags.mytags import longStatBlock
 from OpenBench.utils import merge_required_options
 from OpenBench.views import engine_build_variants, normalize_build_command, parse_ssh_target
-from OpenBench.workloads.get_workload import game_distribution, valid_hardware_assignment, workload_to_dictionary
+from OpenBench.workloads.get_workload import game_distribution, valid_hardware_assignment, valid_private_source_assignment, workload_to_dictionary
 from OpenBench.workloads.verify_workload import collect_github_info
 
 TEST_SSH_KEY = None
@@ -343,15 +343,20 @@ class GithubLookupTests(TestCase):
     @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
     @patch('OpenBench.workloads.verify_workload.requests.get')
     def test_public_engine_uses_configured_github_token(self, mock_get):
-        mock_get.return_value = self.FakeResponse(200, {
-            'commit' : {
-                'sha'    : 'a' * 40,
+        mock_get.side_effect = [
+            self.FakeResponse(200, {
+                'private' : False,
+            }),
+            self.FakeResponse(200, {
                 'commit' : {
-                    'message' : 'bench not required',
-                    'tree'    : { 'sha' : 'b' * 40 },
+                    'sha'    : 'a' * 40,
+                    'commit' : {
+                        'message' : 'bench not required',
+                        'tree'    : { 'sha' : 'b' * 40 },
+                    },
                 },
-            },
-        })
+            }),
+        ]
 
         errors = []
         info, has_all = collect_github_info(errors, self.FakeRequest(), 'dev')
@@ -362,6 +367,73 @@ class GithubLookupTests(TestCase):
         self.assertEqual(mock_get.call_args.kwargs['headers'], {
             'Authorization' : 'Bearer test-token',
         })
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_allowed_private_source_uses_server_proxy_marker(self, mock_get):
+        request = SimpleNamespace(POST=dict(
+            self.FakeRequest.POST,
+            dev_repo='https://github.com/keinoda/YaneuraOu-private',
+            dev_branch='master',
+        ))
+        mock_get.side_effect = [
+            self.FakeResponse(200, {
+                'private' : True,
+            }),
+            self.FakeResponse(200, {
+                'commit' : {
+                    'sha'    : 'a' * 40,
+                    'commit' : {
+                        'message' : 'bench not required',
+                        'tree'    : { 'sha' : 'b' * 40 },
+                    },
+                },
+            }),
+        ]
+
+        errors = []
+        info, has_all = collect_github_info(errors, request, 'dev')
+
+        self.assertEqual(errors, [])
+        self.assertTrue(has_all)
+        self.assertEqual(
+            info[0],
+            'openbench://github/keinoda/YaneuraOu-private/%s.zip' % ('a' * 40))
+        self.assertNotIn('test-token', info[0])
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_allowed_private_source_requires_server_token(self, mock_get):
+        request = SimpleNamespace(POST=dict(
+            self.FakeRequest.POST,
+            dev_repo='https://github.com/keinoda/YaneuraOu-private',
+            dev_branch='master',
+        ))
+
+        errors = []
+        info = collect_github_info(errors, request, 'dev')
+
+        self.assertEqual(info, (None, None))
+        self.assertIn('access tokens', errors[0])
+        mock_get.assert_not_called()
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_other_private_source_is_rejected(self, mock_get):
+        request = SimpleNamespace(POST=dict(
+            self.FakeRequest.POST,
+            dev_repo='https://github.com/keinoda/another-private',
+            dev_branch='master',
+        ))
+        mock_get.return_value = self.FakeResponse(200, {
+            'private' : True,
+        })
+
+        errors = []
+        info = collect_github_info(errors, request, 'dev')
+
+        self.assertEqual(info, (None, None))
+        self.assertIn('not allowed', errors[0])
 
     @patch('OpenBench.workloads.verify_workload.requests.get')
     def test_github_rate_limit_is_reported_directly(self, mock_get):
@@ -447,6 +519,46 @@ class GithubBranchListTests(TestCase):
             'per_page' : 100, 'page' : 2,
         })
 
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_endpoint_lists_only_the_allowed_private_repository(self, mock_get):
+        mock_get.side_effect = [
+            self.FakeResponse(200, {
+                'default_branch' : 'master',
+                'private'        : True,
+            }),
+            self.FakeResponse(200, [
+                { 'name' : 'master' },
+                { 'name' : 'local-backup/nagisa_v3' },
+            ]),
+        ]
+
+        response = self.client.get('/api/branches/', {
+            'engine' : 'YaneuraOu-nagisa',
+            'repo'   : 'https://github.com/keinoda/YaneuraOu-private',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()['branches'],
+            ['local-backup/nagisa_v3', 'master'])
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.workloads.verify_workload.requests.get')
+    def test_endpoint_rejects_other_private_repositories(self, mock_get):
+        mock_get.return_value = self.FakeResponse(200, {
+            'default_branch' : 'main',
+            'private'        : True,
+        })
+
+        response = self.client.get('/api/branches/', {
+            'engine' : 'YaneuraOu-nagisa',
+            'repo'   : 'https://github.com/keinoda/another-private',
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('許可されていません', response.json()['error'])
+
     @patch('OpenBench.workloads.verify_workload.requests.get')
     def test_github_error_is_returned_to_the_form(self, mock_get):
         mock_get.return_value = self.FakeResponse(
@@ -472,6 +584,117 @@ class GithubBranchListTests(TestCase):
         self.assertContains(response, 'GitHubから取得中...')
         self.assertNotContains(response, '<input id="dev_branch"')
         self.assertNotContains(response, '<input id="base_branch"')
+
+
+class PrivateGithubArchiveTests(TestCase):
+
+    class FakeArchiveResponse:
+        status_code = 200
+
+        def __init__(self, content=b'private-source-zip'):
+            self.content = content
+            self.closed = False
+
+        def iter_content(self, chunk_size):
+            yield self.content
+
+        def close(self):
+            self.closed = True
+
+    def setUp(self):
+        import OpenBench.config
+        import OpenBench.utils
+
+        self.user = User.objects.create_user('alice', 'a@example.com', 'pw')
+        Profile.objects.create(user=self.user, enabled=True)
+        self.sha = 'a' * 40
+        self.repo = 'https://github.com/keinoda/YaneuraOu-private'
+        self.engine = Engine.objects.create(
+            name='master',
+            source=OpenBench.utils.private_source_archive(self.repo, self.sha),
+            sha=self.sha,
+            bench=0,
+        )
+        self.test = Test.objects.create(
+            author='alice',
+            dev=self.engine,
+            base=self.engine,
+            dev_repo=self.repo,
+            base_repo=self.repo,
+            dev_engine='YaneuraOu-nagisa',
+            base_engine='YaneuraOu-nagisa',
+        )
+        self.machine = Machine.objects.create(
+            user=self.user,
+            workload=self.test.id,
+            secret='machine-secret',
+            info={
+                'client_ver' : OpenBench.config.OPENBENCH_CONFIG['client_version'],
+                'OPENBENCH_CONFIG_CHECKSUM' : OpenBench.config.OPENBENCH_CONFIG_CHECKSUM,
+            },
+        )
+
+    def request_data(self, machine=None):
+        machine = machine or self.machine
+        return {
+            'machine_id' : machine.id,
+            'secret'     : machine.secret,
+            'test_id'    : self.test.id,
+            'side'       : 'dev',
+        }
+
+    @patch.dict(os.environ, { 'OPENBENCH_GITHUB_TOKEN' : 'test-token' })
+    @patch('OpenBench.views.requests.get')
+    def test_assigned_owner_worker_receives_streamed_archive(self, mock_get):
+        upstream = self.FakeArchiveResponse()
+        mock_get.return_value = upstream
+
+        response = self.client.post(
+            '/clientGetGitHubArchive/', self.request_data())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b''.join(response.streaming_content), b'private-source-zip')
+        self.assertTrue(upstream.closed)
+        self.assertEqual(
+            mock_get.call_args.args[0],
+            'https://api.github.com/repos/keinoda/YaneuraOu-private/zipball/%s' % self.sha)
+        self.assertEqual(mock_get.call_args.kwargs['headers'], {
+            'Authorization' : 'Bearer test-token',
+        })
+
+    @patch('OpenBench.views.requests.get')
+    def test_other_users_worker_cannot_receive_private_source(self, mock_get):
+        import OpenBench.config
+
+        other = User.objects.create_user('bob', 'b@example.com', 'pw')
+        Profile.objects.create(user=other, enabled=True)
+        machine = Machine.objects.create(
+            user=other,
+            workload=self.test.id,
+            secret='other-secret',
+            info={
+                'client_ver' : OpenBench.config.OPENBENCH_CONFIG['client_version'],
+                'OPENBENCH_CONFIG_CHECKSUM' : OpenBench.config.OPENBENCH_CONFIG_CHECKSUM,
+            },
+        )
+
+        response = self.client.post(
+            '/clientGetGitHubArchive/', self.request_data(machine))
+
+        self.assertEqual(response.status_code, 403)
+        mock_get.assert_not_called()
+
+    def test_scheduler_keeps_private_source_on_authors_workers(self):
+        own_machine = SimpleNamespace(user=self.user)
+        other_user = User.objects.create_user('bob', 'b@example.com', 'pw')
+        other_machine = SimpleNamespace(user=other_user)
+
+        self.assertTrue(valid_private_source_assignment(self.test, own_machine))
+        self.assertFalse(valid_private_source_assignment(self.test, other_machine))
+
+        self.test.dev_repo = self.test.base_repo = 'https://github.com/keinoda/YaneuraOu'
+        self.assertTrue(valid_private_source_assignment(self.test, other_machine))
+
 
 class InviteOnlyRegistrationTests(TestCase):
 
