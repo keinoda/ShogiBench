@@ -142,6 +142,27 @@ class MatchRunnerPonderModeTests(unittest.TestCase):
         self.assertIn('proto=uci', command)
         self.assertNotIn('ponder=', command)
 
+    def test_shogi_hash_is_mapped_before_threads_for_all_thread_counts(self):
+        for threads in (1, 4):
+            with self.subTest(threads=threads):
+                config = self.config('openings_shogi_sfen.epd', 'off')
+                config.workload['test']['dev']['options'] = 'Threads=%d Hash=256' % threads
+                command = self.worker.MatchRunner.engine_settings(
+                    config, 'engine', 'dev', 1.0, 0)
+
+                self.assertNotIn(' option.Hash=', command)
+                self.assertLess(
+                    command.index(' option.USI_Hash=256'),
+                    command.index(' option.Threads=%d' % threads))
+
+    def test_fastchess_keeps_hash_option_name_and_order(self):
+        config = self.config('openings.epd', 'off')
+        config.workload['test']['dev']['options'] = 'Threads=4 Hash=256'
+        command = self.worker.MatchRunner.engine_settings(config, 'engine', 'dev', 1.0, 0)
+
+        self.assertIn(' option.Threads=4 option.Hash=256', command)
+        self.assertNotIn(' option.USI_Hash=', command)
+
     def test_unknown_mode_is_rejected(self):
         config = self.config('openings_shogi_sfen.epd', 'unexpected')
         with self.assertRaisesRegex(ValueError, 'Unknown Ponder mode'):
