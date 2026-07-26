@@ -62,7 +62,7 @@ from client import try_forever
 
 ## Basic configuration of the Client. These timeouts can be changed at will
 
-CLIENT_VERSION   = 63 # Client version to send to the Server
+CLIENT_VERSION   = 64 # Client version to send to the Server
 TIMEOUT_HTTP     = 30 # Timeout in seconds for HTTP requests
 TIMEOUT_ERROR    = 10 # Timeout in seconds when any errors are thrown
 TIMEOUT_WORKLOAD = 30 # Timeout in seconds between workload requests
@@ -611,6 +611,26 @@ class MatchRunner:
             return ['fastchess-ob.exe', './fastchess-ob'][IS_LINUX]
 
     @staticmethod
+    def engine_option_tokens(config, options):
+
+        tokens = re.findall(r'"[^"]*"|\S+', options)
+        if not MatchRunner.is_shogi(config):
+            return tokens
+
+        # ShogiBench上の共通名Hashを、YaneuraOuのUSI名へ変換する。
+        # Threadsより先に送って、既定のUSI_Hash=1024を一時確保させない。
+        hash_tokens = []
+        other_tokens = []
+        for token in tokens:
+            name, separator, value = token.partition('=')
+            if separator and name.casefold() == 'hash':
+                hash_tokens.append('USI_Hash=%s' % value)
+            else:
+                other_tokens.append(token)
+
+        return hash_tokens + other_tokens
+
+    @staticmethod
     def basic_settings(config):
 
         # Assume Fischer if FRC, 960, or FISCHER appears in the Opening Book
@@ -780,7 +800,7 @@ class MatchRunner:
                 options += ' %s=%s' % (param, str(data[branch][runner_idx]))
 
         # Join options together in format expected by match runner
-        options = ' option.'.join([''] + re.findall(r'"[^"]*"|\S+', options))
+        options = ' option.'.join([''] + MatchRunner.engine_option_tokens(config, options))
         return '-engine dir=Engines/ cmd=./%s proto=%s %s%s%s name=%s-%s' % (
             command, proto, control, ponder, options, engine, branch)
 
