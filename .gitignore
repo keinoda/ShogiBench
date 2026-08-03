@@ -22,3 +22,4 @@ Media/Events/*
 *.epd
 
 staticfiles/
+tmp/
