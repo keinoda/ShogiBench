@@ -36,6 +36,8 @@ import zipfile
 IS_WINDOWS = platform.system() == 'Windows' # Don't touch this
 IS_LINUX   = platform.system() != 'Windows' # Don't touch this
 
+PRIVATE_SOURCE_PREFIX = 'openbench://github/'
+
 
 class OpenBenchFatalWorkerException(Exception):
     def __init__(self, message):
@@ -357,7 +359,36 @@ def apply_tune_patch(tune, target_dir):
             raise OpenBenchBuildFailedException(
                 'TUNE patch (.tuneキット "%s") の適用に失敗しました' % (tune.get('name')), output)
 
-def download_public_engine(engine, net_path, branch, source, make_path, out_path, compiler=None, build_args='', alt_binary='', tune=None):
+def download_engine_source(source, zip_path, source_request=None):
+
+    if source.startswith(PRIVATE_SOURCE_PREFIX):
+        if not source_request:
+            raise OpenBenchFatalWorkerException('Private source request is missing')
+        target = url_join(source_request['server'], 'clientGetGitHubArchive')
+        response = requests.post(
+            target,
+            data=source_request['payload'],
+            stream=True,
+            timeout=300,
+        )
+    else:
+        response = requests.get(source, stream=True, timeout=300)
+
+    if response.status_code != 200:
+        response.close()
+        raise OpenBenchFatalWorkerException(
+            'Engine source download failed (HTTP %d)' % response.status_code)
+
+    try:
+        with open(zip_path, 'wb') as zip_file:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    zip_file.write(chunk)
+    finally:
+        response.close()
+
+
+def download_public_engine(engine, net_path, branch, source, make_path, out_path, compiler=None, build_args='', alt_binary='', tune=None, source_request=None):
 
     # Check to see if we already have the binary
     if check_for_engine_binary(out_path):
@@ -371,8 +402,7 @@ def download_public_engine(engine, net_path, branch, source, make_path, out_path
 
         # Download the zip file from Github
         zip_path = os.path.join(temp_dir, '%s-tmp' % (engine))
-        with open(zip_path, 'wb') as zip_file:
-            zip_file.write(requests.get(source).content)
+        download_engine_source(source, zip_path, source_request)
 
         # Unzip the engine to a directory called <engine>
         unzip_path = os.path.join(temp_dir, engine)

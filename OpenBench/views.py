@@ -22,6 +22,7 @@ import base64, binascii, io, os, hashlib, datetime, json, math, secrets, shlex, 
 from types import SimpleNamespace
 
 import paramiko
+import requests
 
 import django.http
 import django.shortcuts
@@ -48,7 +49,7 @@ from OpenSite.settings import MEDIA_ROOT
 
 from django.db import transaction, IntegrityError
 from django.db.models import Count, F, Q
-from django.http import HttpResponse, JsonResponse, FileResponse
+from django.http import HttpResponse, JsonResponse, FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.core.files.storage import FileSystemStorage
 from django.core.files.base import ContentFile
@@ -418,13 +419,19 @@ def engine_build_variants(engine):
 
     ## Static variants from the engine's json config, merged with the
     ## user-defined ones from the /builds/ page. Static names win, then
-    ## engine-specific variants, then variants shared across all engines
-    ## (registered under the pseudo-engine '*')
+    ## variants for the selected engine, compatible engines, and finally
+    ## variants shared across all engines (registered under '*')
 
-    variants = dict(OPENBENCH_CONFIG['engines'][engine]['build']['variants'])
+    compatible_engines = OpenBench.utils.build_network_engines(engine)
+    variants = {}
 
-    for variant in BuildVariant.objects.filter(engine=engine).order_by('name'):
-        variants.setdefault(variant.name, variant.args)
+    for candidate in compatible_engines:
+        for name, args in OPENBENCH_CONFIG['engines'][candidate]['build']['variants'].items():
+            variants.setdefault(name, args)
+
+    for candidate in compatible_engines:
+        for variant in BuildVariant.objects.filter(engine=candidate).order_by('name'):
+            variants.setdefault(variant.name, variant.args)
 
     for variant in BuildVariant.objects.filter(engine='*').order_by('name'):
         variants.setdefault(variant.name, variant.args)
@@ -460,7 +467,11 @@ def builds(request):
             if not re.match(r'^[\w.+()-]+$', name):
                 return redirect(request, '/builds/', error='Variant names may only contain letters, numbers, and ._+()-')
 
-            static_scope = OPENBENCH_CONFIG['engines'].keys() if engine == '*' else [engine]
+            static_scope = (
+                OPENBENCH_CONFIG['engines'].keys()
+                if engine == '*'
+                else OpenBench.utils.build_network_engines(engine)
+            )
             for static_engine in static_scope:
                 if name in OPENBENCH_CONFIG['engines'][static_engine]['build']['variants']:
                     return redirect(request, '/builds/', error='"%s" is a predefined variant of %s and cannot be changed' % (name, static_engine))
@@ -1565,6 +1576,75 @@ def client_get_network(request, engine, name):
     # Return the requested Neural Network file for the Client
     return networks(request, engine, 'DOWNLOAD', name, client=True)
 
+
+@csrf_exempt
+@verify_worker
+def client_get_github_archive(request, machine):
+
+    test = Test.objects.filter(id=request.POST.get('test_id', 0)).first()
+    side = request.POST.get('side')
+
+    if not test or side not in ('dev', 'base'):
+        return HttpResponse('Invalid source request', status=400)
+
+    # 非公開ソースは、そのテストを現在割り当てられている作成者本人の
+    # workerにだけ渡す。他ユーザーのworkerへprivate codeを配布しない。
+    if machine.workload != test.id or machine.user.username != test.author:
+        return HttpResponse('Source access denied', status=403)
+
+    repo        = getattr(test, '%s_repo' % side).rstrip('/')
+    engine_name = getattr(test, '%s_engine' % side)
+    engine      = getattr(test, side)
+
+    if not OpenBench.utils.is_private_source(engine_name, repo):
+        return HttpResponse('Source not found', status=404)
+
+    try:
+        expected_source = OpenBench.utils.private_source_archive(repo, engine.sha)
+    except ValueError:
+        return HttpResponse('Source not found', status=404)
+
+    if engine.source != expected_source:
+        return HttpResponse('Source not found', status=404)
+
+    headers = OpenBench.utils.read_git_credentials(engine_name)
+    if not headers:
+        return HttpResponse('Private source token is not configured', status=503)
+
+    match = re.fullmatch(
+        r'https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)', repo)
+    if not match:
+        return HttpResponse('Source not found', status=404)
+
+    url = OpenBench.utils.path_join(
+        'https://api.github.com/repos', match.group(1), match.group(2),
+        'zipball', engine.sha)
+
+    try:
+        upstream = requests.get(
+            url, headers=headers, stream=True, timeout=(15, 300))
+    except requests.RequestException:
+        return HttpResponse('GitHub source download failed', status=502)
+
+    if upstream.status_code != 200:
+        upstream.close()
+        return HttpResponse('GitHub source download failed', status=502)
+
+    def chunks():
+        try:
+            for chunk in upstream.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    response = StreamingHttpResponse(chunks(), content_type='application/zip')
+    response['Content-Disposition'] = 'attachment; filename="%s-%s.zip"' % (
+        match.group(2), engine.sha[:12])
+    response['Cache-Control'] = 'private, no-store'
+    return response
+
+
 @csrf_exempt
 @verify_worker
 def client_get_workload(request, machine):
@@ -2106,12 +2186,13 @@ def api_networks(request, engine):
     if engine in OPENBENCH_CONFIG['engines'].keys():
 
         default = None
-        if (network := Network.objects.filter(engine=engine, default=True).first()):
+        if (network := OpenBench.utils.network_for_engine(engine, default=True)):
             default = OpenBench.model_utils.network_to_dict(network)
 
         networks = [
             OpenBench.model_utils.network_to_dict(network)
-            for network in Network.objects.filter(engine=engine)
+            for network in Network.objects.filter(
+                engine__in=OpenBench.utils.build_network_engines(engine))
         ]
 
         return api_response({ 'default' : default, 'networks' : networks })
@@ -2125,10 +2206,10 @@ def api_network_download(request, engine, identifier):
     if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
 
-    if (network := Network.objects.filter(engine=engine, sha256=identifier).first()):
+    if (network := OpenBench.utils.network_for_engine(engine, sha256=identifier)):
         return OpenBench.utils.network_download(request, engine, network)
 
-    if (network := Network.objects.filter(engine=engine, name=identifier).first()):
+    if (network := OpenBench.utils.network_for_engine(engine, name=identifier)):
         return OpenBench.utils.network_download(request, engine, network)
 
     return api_response({ 'error' : 'Engine not found. Check /api/config/ for a full list' })
@@ -2139,7 +2220,9 @@ def api_network_download_aux(request, engine, identifier, name):
     if not api_authenticate(request, require_enabled=True, allow_worker_key=True):
         return api_response({ 'error' : 'API requires authentication for this endpoint' })
 
-    if not (network := OpenBench.utils.network_disambiguate(engine, identifier)):
+    network = OpenBench.utils.network_for_engine(engine, name=identifier)
+    network = network or OpenBench.utils.network_for_engine(engine, sha256=identifier)
+    if not network:
         return api_response({ 'error' : 'Network %s for Engine %s not found' % (identifier, engine) })
 
     if not (aux := network.aux_files.filter(name=name).first()):

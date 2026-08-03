@@ -204,10 +204,12 @@ def create_new_test(request):
         test.max_games = int(request.POST['test_max_games'])
 
     if test.dev_network:
-        test.dev_netname = Network.objects.get(engine=test.dev_engine, sha256=test.dev_network).name
+        test.dev_netname = OpenBench.utils.network_for_engine(
+            test.dev_engine, sha256=test.dev_network).name
 
     if test.base_network:
-        test.base_netname = Network.objects.get(engine=test.base_engine, sha256=test.base_network).name
+        test.base_netname = OpenBench.utils.network_for_engine(
+            test.base_engine, sha256=test.base_network).name
 
     test.save()
 
@@ -272,7 +274,8 @@ def create_new_tune(request):
     test.awaiting         = not dev_has_all
 
     if test.dev_network:
-        name = Network.objects.get(engine=test.dev_engine, sha256=test.dev_network).name
+        name = OpenBench.utils.network_for_engine(
+            test.dev_engine, sha256=test.dev_network).name
         test.dev_netname = test.base_netname = name
 
     test.save()
@@ -341,10 +344,12 @@ def create_new_datagen(request):
     test.use_penta         = test.play_reverses
 
     if test.dev_network:
-        test.dev_netname = Network.objects.get(engine=test.dev_engine, sha256=test.dev_network).name
+        test.dev_netname = OpenBench.utils.network_for_engine(
+            test.dev_engine, sha256=test.dev_network).name
 
     if test.base_network:
-        test.base_netname = Network.objects.get(engine=test.base_engine, sha256=test.base_network).name
+        test.base_netname = OpenBench.utils.network_for_engine(
+            test.base_engine, sha256=test.base_network).name
 
     test.save()
 

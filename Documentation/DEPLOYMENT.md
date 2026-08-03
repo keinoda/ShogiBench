@@ -34,7 +34,7 @@ ShogiBench は「コーディネーションサーバー」(この Django アプ
 | `OPENBENCH_DATA_DIR` | 推奨 | SQLite と Media の置き場所。永続ボリュームを指すこと (例 `/data`) |
 | `OPENBENCH_ALLOWED_HOSTS` | 推奨 | 公開ホスト名 (カンマ区切り)。例 `shogibench.fly.dev` |
 | `OPENBENCH_CSRF_TRUSTED_ORIGINS` | 推奨 | `https://` 付きの公開オリジン。ログインフォームの CSRF に必要 |
-| `OPENBENCH_GITHUB_TOKEN` | 推奨 | ブランチ一覧・コミット確認用の GitHub token。未設定時は未認証APIのレート制限を受ける |
+| `OPENBENCH_GITHUB_TOKEN` | 推奨 | ブランチ一覧・コミット確認用の GitHub token。`keinoda/YaneuraOu-private`を使う場合は必須 |
 | `OPENBENCH_DEBUG` | 任意 | 明示的に上書きしたい場合のみ (`1`/`0`) |
 | `WEB_CONCURRENCY` | 任意 | gunicorn ワーカー数 (既定 2) |
 
@@ -43,6 +43,14 @@ ShogiBench は「コーディネーションサーバー」(この Django アプ
 ```sh
 python3 -c 'import secrets; print(secrets.token_urlsafe(50))'
 ```
+
+`keinoda/YaneuraOu-private`をShogiBenchのソースとして使う場合は、
+このリポジトリだけにアクセスできるfine-grained tokenを作り、
+Repository permissionsの`Contents: Read-only`を付けて
+`OPENBENCH_GITHUB_TOKEN`へ設定します。tokenはDjangoサーバーだけが保持し、
+DB、テスト画面、workload payload、workerには渡しません。private sourceのZIPは
+サーバーがGitHubから取得し、そのテストを割り当てられた作成者本人のworkerへ
+既存のworker認証経由で中継します。ほかの非公開リポジトリは許可しません。
 
 > **注意**: DB は SQLite なので、サーバーは常に **1 インスタンス** で運用して
 > ください(水平スケール不可)。この用途では十分な性能があります。

@@ -1,5 +1,5 @@
 {
-    "client_version"     : 62,
+    "client_version"     : 64,
     "client_repo_url"    : "https://github.com/keinoda/ShogiBench",
     "client_repo_ref"    : "shogi",
 
@@ -33,6 +33,7 @@
 
     "engines" : [
         "YaneuraOu-nagisa",
+        "YaneuraOu-private",
         "YaneuraOu-souyuukou",
         "YaneuraOu"
     ]

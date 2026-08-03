@@ -1,7 +1,7 @@
 {
     "private" : false,
     "nps"     : 1000000,
-    "source"  : "https://github.com/keinoda/YaneuraOu",
+    "source"  : "https://github.com/keinoda/YaneuraOu-private",
     "private_sources" : [
         "https://github.com/keinoda/YaneuraOu-private"
     ],

@@ -38,7 +38,7 @@ def network_aux_files(engine, sha):
     # eval_options.txt), as [{name, sha}] for the worker to stage
     if not sha or sha == 'None':
         return []
-    network = Network.objects.filter(engine=engine, sha256=sha).first()
+    network = OpenBench.utils.network_for_engine(engine, sha256=sha)
     if not network:
         return []
     return [{ 'name' : aux.name, 'sha' : aux.sha256 } for aux in network.aux_files.all()]
@@ -136,6 +136,13 @@ def filter_valid_workloads(request, machine):
         workloads = workloads.exclude(syzygy_adj='%d-MAN' % (K))
         workloads = workloads.exclude(syzygy_wdl='%d-MAN' % (K))
 
+    # 非公開ソースを含むテストは、作成者本人が所有するworkerにだけ配る。
+    # 公開テストの共有workerプールは従来どおり維持する。
+    workloads = [
+        workload for workload in workloads
+        if valid_private_source_assignment(workload, machine)
+    ]
+
     # Skip any workload using, or measuring, Time, for --noisy workers
     if machine.info.get('noisy'):
         workloads = [x for x in workloads if not OpenBench.utils.workload_uses_time_based_tc(x)]
@@ -162,6 +169,14 @@ def filter_valid_workloads(request, machine):
         candidates = list(filter(lambda x: x.dev_engine in focuses, candidates))
 
     return candidates, has_focus
+
+
+def valid_private_source_assignment(workload, machine):
+    return (
+        not OpenBench.utils.workload_uses_private_source(workload)
+        or workload.author == machine.user.username
+    )
+
 
 def valid_spsa_assignment(workload, machine):
 

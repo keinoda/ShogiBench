@@ -92,9 +92,10 @@ def collect_github_branches(repo, engine):
 
     engine_config = OpenBench.config.OPENBENCH_CONFIG['engines'][engine]
     headers = dict(OpenBench.utils.read_git_credentials(engine) or {})
+    source_private = OpenBench.utils.is_private_source(engine, repo)
 
-    if engine_config['private'] and not headers:
-        raise ValueError('この非公開エンジンのアクセストークンがサーバーにありません')
+    if (engine_config['private'] or source_private) and not headers:
+        raise ValueError('この非公開ソースのアクセストークンがサーバーにありません')
 
     if engine_config['private'] and repo != engine_config['source'].rstrip('/'):
         raise ValueError('非公開エンジンでは登録済みリポジトリ以外を参照できません')
@@ -109,6 +110,9 @@ def collect_github_branches(repo, engine):
 
         if not isinstance(repository, dict):
             raise GithubAPIError('GitHub API returned invalid repository data for %s' % repo)
+
+        if repository.get('private') and not (engine_config['private'] or source_private):
+            raise ValueError('この非公開リポジトリはShogiBenchで許可されていません')
 
         default_branch = repository.get('default_branch')
         if default_branch is None:
@@ -393,7 +397,8 @@ def verify_github_repo(errors, request, field):
 def verify_network(errors, request, field, field_name, engine_field):
     try:
         if request.POST[field] == '': return
-        Network.objects.get(engine=request.POST[engine_field], sha256=request.POST[field])
+        assert OpenBench.utils.network_for_engine(
+            request.POST[engine_field], sha256=request.POST[field])
     except: errors.append('Unknown Network Provided for {0}'.format(field_name))
 
 def verify_build_variant(errors, request, field, field_name, engine_field):
@@ -625,9 +630,11 @@ def collect_github_info(errors, request, field):
     bysha  = bool(re.search('^[0-9a-fA-F]{40}$', branch))
 
     # All API requests will share this common path. Some engines are private.
-    base    = request.POST['%s_repo' % (field)].replace('github.com', 'api.github.com/repos')
+    repo    = request.POST['%s_repo' % (field)].rstrip('/')
+    base    = repo.replace('github.com', 'api.github.com/repos')
     engine  = request.POST['%s_engine' % (field)]
     private = OpenBench.config.OPENBENCH_CONFIG['engines'][engine]['private']
+    source_private = OpenBench.utils.is_private_source(engine, repo)
     headers = OpenBench.utils.read_git_credentials(engine) or {}
 
     ## Step 1: Verify the target of the API requests
@@ -636,7 +643,7 @@ def collect_github_info(errors, request, field):
     ## [C] Determine which, if any, credentials we want to pass along
 
     # Private engines must have a token stored in credentials.enginename
-    if private and not headers:
+    if (private or source_private) and not headers:
         errors.append('Server does not have access tokens for this engine')
         return (None, None)
 
@@ -648,6 +655,22 @@ def collect_github_info(errors, request, field):
     # Avoid leaking our credentials to other websites
     if not base.startswith('https://api.github.com/'):
         errors.append('OpenBench may only reach Github\'s API')
+        return (None, None)
+
+    try:
+        repository = github_json(
+            requests.get(base, headers=headers, timeout=30), repo)
+        if not isinstance(repository, dict):
+            errors.append('GitHub returned invalid repository data for %s' % repo)
+            return (None, None)
+        if repository.get('private') and not (private or source_private):
+            errors.append('This private repository is not allowed by ShogiBench')
+            return (None, None)
+    except GithubAPIError as error:
+        errors.append(str(error))
+        return (None, None)
+    except requests.RequestException:
+        errors.append('Unable to connect to Github while checking %s' % repo)
         return (None, None)
 
     ## Step 2: Connect to the Github API for the given Branch or Commit SHA.
@@ -690,6 +713,12 @@ def collect_github_info(errors, request, field):
     if (bench := determine_bench(request, field, data['commit']['message'])) is None:
         errors.append('Unable to parse a Bench for %s' % (branch))
         return (None, None)
+
+    # 許可した非公開ソースはサーバー経由でworkerへ渡す。GitHub tokenは
+    # source URLやworkload payloadに含めない。
+    if source_private and not private:
+        source = OpenBench.utils.private_source_archive(repo, data['sha'])
+        return (source, branch, data['sha'], bench), True
 
     # Public Engines: Construct the .zip download and return everything
     if not private:

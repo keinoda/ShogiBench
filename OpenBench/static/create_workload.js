@@ -20,10 +20,17 @@ function create_network_options(field_id, engine) {
     while (network_options.length)
         network_options.remove(0);
 
-    // Add each Network that matches the given engine
+    const group = config.engines[engine].build_network_group;
+    const compatible_engines = new Set(
+        Object.keys(config.engines).filter(
+            name => config.engines[name].build_network_group === group
+        )
+    );
+
+    // Add each Network that matches the engine's build/network group
     for (const network of networks) {
 
-        if (network.engine !== engine)
+        if (!compatible_engines.has(network.engine))
             continue;
 
         var opt      = document.createElement('option');

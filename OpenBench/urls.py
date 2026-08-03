@@ -70,6 +70,7 @@ urlpatterns = [
     django.urls.path(r'clientWorkerInfo/', OpenBench.views.client_worker_info),
     django.urls.path(r'clientGetWorkload/', OpenBench.views.client_get_workload),
     django.urls.path(r'clientGetNetwork/<str:engine>/<str:name>/', OpenBench.views.client_get_network),
+    django.urls.path(r'clientGetGitHubArchive/', OpenBench.views.client_get_github_archive),
     django.urls.path(r'clientBenchError/', OpenBench.views.client_bench_error),
     django.urls.path(r'clientSubmitNPS/', OpenBench.views.client_submit_nps),
     django.urls.path(r'clientSubmitError/', OpenBench.views.client_submit_error),

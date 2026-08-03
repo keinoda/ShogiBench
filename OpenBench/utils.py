@@ -150,6 +150,37 @@ def read_git_credentials(engine):
         with open(fpath) as fin:
             return { 'Authorization' : 'token %s' % fin.readlines()[0].rstrip() }
 
+
+PRIVATE_SOURCE_PREFIX = 'openbench://github/'
+
+
+def is_private_source(engine, repo):
+
+    if engine not in OpenBench.config.OPENBENCH_CONFIG['engines']:
+        return False
+
+    target = (repo or '').rstrip('/')
+    allowed = OpenBench.config.OPENBENCH_CONFIG['engines'][engine].get('private_sources', [])
+    return target in [source.rstrip('/') for source in allowed]
+
+
+def private_source_archive(repo, sha):
+
+    target = (repo or '').rstrip('/')
+    prefix = 'https://github.com/'
+    if not target.startswith(prefix) or not re.fullmatch(r'[0-9a-fA-F]{40}', sha or ''):
+        raise ValueError('Invalid private GitHub source')
+
+    return path_join(PRIVATE_SOURCE_PREFIX.rstrip('/'), target[len(prefix):], '%s.zip' % sha)
+
+
+def workload_uses_private_source(test):
+    return (
+        is_private_source(test.dev_engine, test.dev_repo)
+        or is_private_source(test.base_engine, test.base_repo)
+    )
+
+
 def path_join(*args):
     return "/".join([f.lstrip("/").rstrip("/") for f in args]).rstrip('/')
 
@@ -327,6 +358,27 @@ def get_machine(machineid, user, info):
 
 
 # Purely Helper functions for Networks views
+
+def build_network_engines(engine):
+
+    if engine not in OPENBENCH_CONFIG['engines']:
+        return [engine]
+
+    group = OPENBENCH_CONFIG['engines'][engine]['build_network_group']
+    compatible = [
+        name for name, config in OPENBENCH_CONFIG['engines'].items()
+        if config['build_network_group'] == group and name != engine
+    ]
+    return [engine] + compatible
+
+def network_for_engine(engine, **lookup):
+
+    # 同じbuild/networkグループ内では資産を相互利用する。
+    # 同じ識別子が双方にある場合は、選択中エンジン自身の登録を優先する。
+    for candidate in build_network_engines(engine):
+        if network := Network.objects.filter(engine=candidate, **lookup).first():
+            return network
+    return None
 
 def network_disambiguate(engine, identifier):
 
