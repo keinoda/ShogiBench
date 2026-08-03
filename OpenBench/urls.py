@@ -40,6 +40,7 @@ urlpatterns = [
     django.urls.re_path(r'^greens(?:/(?P<page>\d+))?/$', OpenBench.views.greens),
 
     django.urls.path(r'search/', OpenBench.views.search),
+    django.urls.path(r'ratings/', OpenBench.views.ratings),
 
     # Links for viewing general information tables
     django.urls.path(r'users/', OpenBench.views.users),

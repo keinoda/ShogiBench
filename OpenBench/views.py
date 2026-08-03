@@ -18,7 +18,7 @@
 #                                                                             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-import base64, binascii, io, os, hashlib, datetime, json, secrets, shlex, sys, re
+import base64, binascii, io, os, hashlib, datetime, json, math, secrets, shlex, sys, re
 from types import SimpleNamespace
 
 import paramiko
@@ -31,6 +31,7 @@ import OpenBench.config
 import OpenBench.utils
 import OpenBench.model_utils
 import OpenBench.pgn_archive
+import OpenBench.ratings
 
 from OpenBench.workloads.create_workload import create_new_test, create_workload, finalize_workload_creation
 from OpenBench.workloads.get_workload import get_workload
@@ -1122,6 +1123,98 @@ def search(request):
 
     error = 'No matching tests found' if not len(filtered) else None
     return render(request, 'search.html', { 'tests' : reversed(filtered) }, error=error)
+
+def ratings(request):
+
+    raw_test_ids = request.GET.get('tests', '')
+    data = { 'test_ids_input' : raw_test_ids }
+    if not raw_test_ids.strip():
+        return render(request, 'ratings.html', data)
+
+    try:
+        test_ids = OpenBench.ratings.parse_test_ids(raw_test_ids)
+        selected = Test.objects.filter(id__in=test_ids).select_related('dev', 'base')
+        tests_by_id = {test.id: test for test in selected}
+        missing = [test_id for test_id in test_ids if test_id not in tests_by_id]
+        if missing:
+            raise OpenBench.ratings.RatingInputError(
+                '存在しないテスト番号があります: %s'
+                % ', '.join(map(str, missing)))
+
+        tests = [tests_by_id[test_id] for test_id in test_ids]
+        analysis = OpenBench.ratings.analyze_tests(
+            tests,
+            bootstrap_samples=OpenBench.ratings.BOOTSTRAP_SAMPLES,
+        )
+
+    except (
+        OpenBench.ratings.RatingInputError,
+        OpenBench.ratings.RatingConvergenceError,
+    ) as error:
+        data['rating_error'] = str(error)
+        return render(request, 'ratings.html', data)
+
+    player_rows = []
+    for rank, player in enumerate(analysis.players, start=1):
+        player_rows.append({
+            'rank'             : rank,
+            'label'            : player.label,
+            'aliases'          : player.aliases,
+            'network'          : player.key.network or '（未指定）',
+            'commit'           : player.key.commit or '（未指定）',
+            'rating'           : '%+.1f' % player.rating,
+            'interval'         : '%+.1f ～ %+.1f' % (player.lower, player.upper),
+            'games'            : player.games,
+            'first_place_rate' : '%.1f%%' % (100.0 * player.first_place_rate),
+        })
+
+    def elo_text(value):
+        if math.isinf(value):
+            return '+∞' if value > 0 else '−∞'
+        return '%+.1f' % value
+
+    head_to_head_rows = []
+    for result in analysis.head_to_head:
+        head_to_head_rows.append({
+            'label_a'    : result.label_a,
+            'label_b'    : result.label_b,
+            'wdl'        : '%d–%d–%d' % (result.wins, result.draws, result.losses),
+            'direct_elo' : elo_text(result.direct_elo),
+            'fitted_elo' : elo_text(result.fitted_elo),
+            'residual'   : elo_text(result.residual),
+        })
+
+    cfs_rows = []
+    for player, values in zip(analysis.players, analysis.cfs):
+        cfs_rows.append({
+            'label'  : player.label,
+            'values' : ['%.1f%%' % (100.0 * value) for value in values],
+        })
+
+    test_rows = []
+    for test in tests:
+        test_rows.append({
+            'id'       : test.id,
+            'dev'      : OpenBench.ratings.ai_label(test, 'dev'),
+            'base'     : OpenBench.ratings.ai_label(test, 'base'),
+            'games'    : test.games,
+            'wdl'      : '%d–%d–%d' % (test.wins, test.draws, test.losses),
+            'ptnml'    : '[%d, %d, %d, %d, %d]'
+                         % (test.LL, test.LD, test.DD, test.DW, test.WW),
+            'finished' : test.finished,
+            'deleted'  : test.deleted,
+        })
+
+    data.update({
+        'test_rows'         : test_rows,
+        'player_rows'       : player_rows,
+        'head_to_head_rows' : head_to_head_rows,
+        'cfs_headers'       : [player.label for player in analysis.players],
+        'cfs_rows'          : cfs_rows,
+        'rating_warnings'   : analysis.warnings,
+        'bootstrap_samples' : analysis.bootstrap_samples,
+    })
+    return render(request, 'ratings.html', data)
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                           GENERAL DATA TABLE VIEWS                          #

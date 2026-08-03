@@ -1,0 +1,147 @@
+{% extends "OpenBench/base.html" %}
+
+{% block content %}
+    <h2>複数テスト集計</h2>
+
+    <p>テスト番号を指定し、保存済みのW/D/LとPtnmlだけから複数AIの相対レーティングを計算します。棋譜や合成PGNは使用しません。</p>
+
+    <form method="GET" action="/ratings/">
+        <div class="form">
+            <div class="col">
+                <div class="row">
+                    <label for="tests">テスト番号</label>
+                    <input id="tests" name="tests" value="{{test_ids_input}}" placeholder="103, 109, 110">
+                </div>
+                <input type="submit" class="anchorbutton btn-blue w-100" value="集計する">
+            </div>
+        </div>
+    </form>
+
+    {% if rating_error %}
+        <div class="error-message">
+            <p>{{rating_error}}</p>
+        </div>
+    {% endif %}
+
+    {% if rating_warnings %}
+        <div class="warning-message">
+            <p>以下の注意事項があります。条件差は補正せず、記録値のまま集計しています。</p>
+            <ul>
+                {% for warning in rating_warnings %}
+                    <li>{{warning}}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    {% if player_rows %}
+        <h3>使用したテスト</h3>
+        <div class="ratings-table-scroll">
+            <table class="stripes hoverable">
+                <tr class="table-header">
+                    <th>Test</th>
+                    <th>Dev</th>
+                    <th>Base</th>
+                    <th>対局数</th>
+                    <th>W–D–L</th>
+                    <th>Ptnml</th>
+                    <th>状態</th>
+                </tr>
+                {% for test in test_rows %}
+                    <tr>
+                        <td><a href="/test/{{test.id}}/">{{test.id}}</a></td>
+                        <td>{{test.dev}}</td>
+                        <td>{{test.base}}</td>
+                        <td class="numeric">{{test.games}}</td>
+                        <td class="numeric">{{test.wdl}}</td>
+                        <td class="numeric">{{test.ptnml}}</td>
+                        <td>
+                            {% if test.deleted %}削除済み
+                            {% elif test.finished %}完了
+                            {% else %}実行中{% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <h3>相対レーティング</h3>
+        <p>参加AIの平均を0としています。95%区間と1位率はPtnmlのペア単位bootstrap {{bootstrap_samples}}回で計算しています。</p>
+        <div class="ratings-table-scroll">
+            <table class="stripes hoverable">
+                <tr class="table-header">
+                    <th>順位</th>
+                    <th>AI</th>
+                    <th>Network SHA</th>
+                    <th>Commit SHA</th>
+                    <th>Rating</th>
+                    <th>95%区間</th>
+                    <th>対局数</th>
+                    <th>1位率</th>
+                </tr>
+                {% for player in player_rows %}
+                    <tr>
+                        <td class="numeric">{{player.rank}}</td>
+                        <td>
+                            {{player.label}}
+                            {% if player.aliases %}
+                                <br><small>別名: {{player.aliases|join:", "}}</small>
+                            {% endif %}
+                        </td>
+                        <td><code>{{player.network}}</code></td>
+                        <td><code>{{player.commit}}</code></td>
+                        <td class="numeric">{{player.rating}}</td>
+                        <td class="numeric">{{player.interval}}</td>
+                        <td class="numeric">{{player.games}}</td>
+                        <td class="numeric">{{player.first_place_rate}}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <h3>直接対戦と全体推定</h3>
+        <div class="ratings-table-scroll">
+            <table class="stripes hoverable">
+                <tr class="table-header">
+                    <th>AI A</th>
+                    <th>AI B</th>
+                    <th>A視点 W–D–L</th>
+                    <th>直接Elo</th>
+                    <th>全体推定差</th>
+                    <th>残差</th>
+                </tr>
+                {% for result in head_to_head_rows %}
+                    <tr>
+                        <td>{{result.label_a}}</td>
+                        <td>{{result.label_b}}</td>
+                        <td class="numeric">{{result.wdl}}</td>
+                        <td class="numeric">{{result.direct_elo}}</td>
+                        <td class="numeric">{{result.fitted_elo}}</td>
+                        <td class="numeric">{{result.residual}}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+
+        <h3>優越確率</h3>
+        <p>行のAIが列のAIより高いレーティングになるbootstrap標本の割合です。</p>
+        <div class="ratings-table-scroll">
+            <table class="stripes hoverable">
+                <tr class="table-header">
+                    <th>AI</th>
+                    {% for header in cfs_headers %}
+                        <th>{{header}}</th>
+                    {% endfor %}
+                </tr>
+                {% for row in cfs_rows %}
+                    <tr>
+                        <th>{{row.label}}</th>
+                        {% for value in row.values %}
+                            <td class="numeric">{{value}}</td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+    {% endif %}
+{% endblock %}

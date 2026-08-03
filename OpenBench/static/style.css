@@ -123,6 +123,21 @@ body, html, main{
     word-wrap: break-word;
 }
 
+#content .ratings-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+#content .ratings-table-scroll table {
+    width: max-content;
+    min-width: 100%;
+}
+
+#content .ratings-table-scroll th,
+#content .ratings-table-scroll td {
+    white-space: nowrap;
+}
+
 /* Things which enable a Cursor Pointer event */
 
 #content .cursor {
